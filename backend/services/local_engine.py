@@ -1089,11 +1089,35 @@ PRIORITY_WEIGHT = {"P0": 4.0, "P1": 2.5, "P2": 1.2, "P3": 0.5}
 MIN_WORDS, MAX_WORDS = 380, 1000
 
 
+# Any digit counts as quantification for *ranking* purposes. METRIC_RE stays
+# strict because the truth gate uses it, but "cut release cycle from 2 weeks to
+# 2 days" and "team of 10" are quantified achievements that it deliberately
+# ignores, and ranking must not.
+QUANT_RE = re.compile(r"\d")
+
+# Claims only this candidate can make. These are what a recruiter remembers, and
+# a purely keyword-driven ranking throws them away.
+DISTINCTIVE_RE = re.compile(
+    r"\b(highest|largest|first|sole|only|founding|founded|fastest|best|"
+    r"top|record|singl[ey]-handed|zero|award|recognis|recogniz)\w*\b",
+    re.I,
+)
+
+
 def _bullet_relevance(bullet: str, wanted: dict[str, float]) -> float:
     terms = ontology.extract_known_terms(bullet)
-    score = sum(wanted.get(t, 0.0) for t in terms)
-    if METRIC_RE.search(bullet):
-        score += 2.0
+
+    # Capped: a bullet stuffed with technology names should not be able to crowd
+    # out a quantified achievement simply by naming more things. Before this cap,
+    # "Shipped 26 merged pull requests in five weeks - the highest contribution of
+    # any engineer in the GCC" lost its place to keyword-dense filler.
+    keyword_score = min(sum(wanted.get(t, 0.0) for t in terms), 14.0)
+
+    score = keyword_score
+    if QUANT_RE.search(bullet):
+        score += 4.0
+    if DISTINCTIVE_RE.search(bullet):
+        score += 3.0
     if any(bullet.lower().startswith(v) for v in STRONG_VERBS):
         score += 1.0
     score += min(len(terms), 4) * 0.3

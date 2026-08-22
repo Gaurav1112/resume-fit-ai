@@ -286,6 +286,17 @@ def validate(
     counts, total = _density(text)
     master_counts, master_total = _density(master_text) if master_text else (Counter(), 1)
 
+    # Every role carries a location, so a six-role resume necessarily repeats its
+    # city and country. That is structural, not a vocabulary problem, and flagging
+    # it sends the reader off to "fix" something that cannot be fixed.
+    location_tokens: set[str] = set()
+    for value in [resume.contact.location] + [
+        role.location for s_ in resume.sections for role in s_.roles
+    ]:
+        location_tokens.update(re.findall(r"[a-z]{3,}", (value or "").lower()))
+    for token in location_tokens:
+        counts.pop(token, None)
+
     introduced: list[str] = []
     inherited: list[str] = []
     for term, n in counts.most_common(25):
