@@ -210,6 +210,10 @@ async def analyze(
         "jd_match_score": _jd_match(result),
         "trace": ctx.trace_dicts(),
         "usage": provider.usage.to_dict(),
+        # Returned so a stateless host can post it back with /generate; the truth
+        # gate has nothing to check the document against without it.
+        "resume_text": resume_content,
+        "storage": db.AVAILABLE,
     }
 
 
@@ -222,17 +226,36 @@ def _jd_match(result: AnalysisResult) -> float:
 # --------------------------------------------------------------------------- #
 # Generate
 # --------------------------------------------------------------------------- #
-def _rehydrate(analysis_id: str) -> Context:
-    """Rebuild a pipeline context from persisted state — no LLM calls."""
+def _rehydrate(
+    analysis_id: str,
+    inline: dict[str, Any] | None = None,
+    inline_resume_text: str = "",
+) -> Context:
+    """Rebuild a pipeline context — no model calls, no required storage.
+
+    Three sources, in order: the in-process cache, an analysis posted back by the
+    client, then persisted storage. The inline path is what makes this work on
+    serverless, where the second request can land on a cold instance with neither
+    memory nor a writable disk.
+    """
     cached = _SESSIONS.get(analysis_id)
     if cached is not None:
         return cached
 
     record = db.get_analysis(analysis_id)
+    if record is None and inline:
+        result = AnalysisResult.model_validate(inline)
+        record = {
+            "resume_text": inline_resume_text,
+            "jd_text": "",
+            "market": result.target_market,
+            "payload": inline,
+        }
     if record is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Analysis '{analysis_id}' not found. Run the analysis again.",
+            detail=f"Analysis '{analysis_id}' not found and none was supplied. "
+                   "Re-run the analysis.",
         )
 
     result = AnalysisResult.model_validate(record["payload"])
@@ -264,7 +287,7 @@ async def generate(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     if not analysis_id:
         raise HTTPException(status_code=400, detail="analysis_id is required.")
 
-    ctx = _rehydrate(analysis_id)
+    ctx = _rehydrate(analysis_id, payload.get("analysis"), payload.get("resume_text", ""))
     # Force a fresh document even when regenerating within the same session.
     for key in ("resume", "truth_audit", "recruiter"):
         ctx.values.pop(key, None)
@@ -345,6 +368,43 @@ def export(version_id: str, fmt: str) -> Response:
 
     name = result.resume.contact.name or "resume"
     filename = exporters.safe_filename(f"{name}_{result.version_name}") + f".{extension}"
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/render/{kind}.{fmt}")
+def render_document(kind: str, fmt: str, payload: dict[str, Any] = Body(...)) -> Response:
+    """Render a document from a posted payload — no stored version required.
+
+    The GET-by-version-id routes below are the convenience path for local use;
+    this is the one that works on a read-only, stateless host.
+    """
+    fmt = fmt.lower()
+    table = (
+        exporters.EXPORTERS if kind == "resume"
+        else exporters.COVER_LETTER_EXPORTERS if kind == "cover-letter"
+        else None
+    )
+    if table is None:
+        raise HTTPException(status_code=400, detail="kind must be 'resume' or 'cover-letter'.")
+    if fmt not in table:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported format. Use: {', '.join(table)}"
+        )
+
+    result = GenerationResult.model_validate(payload)
+    render, media_type, extension = table[fmt]
+    document = result.resume if kind == "resume" else result.cover_letter
+    data = render(document)
+
+    name = result.resume.contact.name or "resume"
+    label = "" if kind == "resume" else "CoverLetter_"
+    filename = (
+        exporters.safe_filename(f"{name}_{label}{result.version_name}") + f".{extension}"
+    )
     return Response(
         content=data,
         media_type=media_type,

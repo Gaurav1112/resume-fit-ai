@@ -1,0 +1,15 @@
+-r requirements.txt
+
+# Better PDF text extraction locally (preserves column layout). Optional:
+# text_extract falls back to pypdf when it is absent. Pulls in pdfminer.six and
+# Pillow (~25 MB), which is why it is not in the serverless bundle.
+pdfplumber>=0.11
+
+# Optional hosted providers — only needed if you switch LLM_PROVIDER away from
+# `local`. ~14 MB, lazily imported.
+anthropic>=0.69
+# openai>=1.40
+# google-genai>=1.0
+
+pytest>=8.2
+httpx>=0.27

@@ -198,3 +198,66 @@ def test_purge_removes_everything(client):
     assert client.delete("/api/data").status_code == 200
     assert client.get("/api/versions").json() == []
     assert client.get("/api/applications").json() == []
+
+
+# --------------------------------------------------------------------------- #
+# Serverless: read-only filesystem, no shared memory between requests
+# --------------------------------------------------------------------------- #
+def test_config_imports_on_a_read_only_filesystem(monkeypatch):
+    """The app must not die at import time when it cannot create a data dir."""
+    import importlib
+
+    monkeypatch.setenv("DB_PATH", "/nonexistent-dir/x.db")
+    import backend.config as config
+
+    importlib.reload(config)          # must not raise
+    assert config.settings.db_path.name == "x.db"
+
+
+def test_full_flow_survives_a_cold_instance(client, texts):
+    """On serverless the second request has neither the first request's memory
+    nor a writable disk. The analysis is posted back instead."""
+    from backend import main
+
+    resume_text, jd_text = texts
+    analysis = client.post(
+        "/api/analyze", data={"resume_text": resume_text, "jd_text": jd_text}
+    ).json()
+    assert analysis["resume_text"], "analyze must return the master text for the truth gate"
+
+    main._SESSIONS.clear()            # simulate a cold instance
+
+    generated = client.post(
+        "/api/generate",
+        json={
+            "analysis_id": analysis["analysis_id"],
+            "analysis": analysis,
+            "resume_text": analysis["resume_text"],
+            "max_repair_iterations": 1,
+            "lift_rounds": 0,
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["plain_text"].strip()
+
+
+def test_stateless_render_needs_no_stored_version(client, texts):
+    resume_text, jd_text = texts
+    analysis = client.post(
+        "/api/analyze", data={"resume_text": resume_text, "jd_text": jd_text}
+    ).json()
+    generated = client.post(
+        "/api/generate",
+        json={"analysis_id": analysis["analysis_id"], "analysis": analysis,
+              "resume_text": analysis["resume_text"], "max_repair_iterations": 1,
+              "lift_rounds": 0},
+    ).json()
+
+    for kind, magic in (("resume", b"%PDF-"), ("cover-letter", b"%PDF-")):
+        response = client.post(f"/api/render/{kind}.pdf", json=generated)
+        assert response.status_code == 200
+        assert response.content.startswith(magic)
+        assert "attachment" in response.headers["content-disposition"]
+
+    assert client.post("/api/render/nope.pdf", json=generated).status_code == 400
+    assert client.post("/api/render/resume.rtf", json=generated).status_code == 400

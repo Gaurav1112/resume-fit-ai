@@ -408,6 +408,10 @@ $("generateBtn").onclick = async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         analysis_id: state.analysis.analysis_id,
+        /* Posted back so the request carries its own context. On a serverless
+           host the previous request's memory and disk are already gone. */
+        analysis: state.analysis,
+        resume_text: state.analysis.resume_text || "",
         max_repair_iterations: parseInt($("repairIters").value, 10),
         lift_rounds: parseInt($("liftRounds").value, 10),
       }),
@@ -582,10 +586,7 @@ function renderCoverLetter(g) {
     .join("") || `<p class="hint">No evidence mapping recorded.</p>`;
 }
 
-const downloadLetter = (fmt) => {
-  if (!state.generation) return;
-  window.location.href = `/api/cover-letter/${state.generation.version_id}.${fmt}`;
-};
+const downloadLetter = (fmt) => postDownload("cover-letter", fmt);
 $("clTxt").onclick = () => downloadLetter("txt");
 $("clPdf").onclick = () => downloadLetter("pdf");
 $("clDocx").onclick = () => downloadLetter("docx");
@@ -662,10 +663,26 @@ function renderChanges(g) {
 }
 
 /* ---------------------------------------------------------------- exports */
-const download = (fmt) => {
+/* Downloads POST the document and receive the file, so they work on a host with
+   no stored version. */
+async function postDownload(kind, fmt) {
   if (!state.generation) return;
-  window.location.href = `/api/export/${state.generation.version_id}.${fmt}`;
-};
+  const res = await fetch(`/api/render/${kind}.${fmt}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state.generation),
+  });
+  if (!res.ok) return toast("Download failed", true);
+  const blob = await res.blob();
+  const match = (res.headers.get("content-disposition") || "").match(/filename="(.+?)"/);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match ? match[1] : `${kind}.${fmt}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+const download = (fmt) => postDownload("resume", fmt);
 $("dlTxt").onclick = () => download("txt");
 $("dlDocx").onclick = () => download("docx");
 $("dlPdf").onclick = () => download("pdf");

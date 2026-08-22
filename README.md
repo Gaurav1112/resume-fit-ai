@@ -122,6 +122,39 @@ pytest -q                     # 113 tests, no network required
 
 ---
 
+## Deploy to Vercel
+
+```bash
+vercel            # from the repo root; or import the repo at vercel.com/new
+```
+
+No environment variables required — the default engine needs no API key.
+
+Three things were changed to make serverless work, and they are worth knowing if
+you fork this:
+
+1. **`/api/generate` is stateless.** The browser posts the analysis back rather
+   than referencing a server-side id. A serverless second request can land on a
+   cold instance with neither the first request's memory nor a writable disk, so
+   an id-based lookup would 404 intermittently.
+2. **`/api/render/{resume|cover-letter}.{pdf|docx|txt}`** takes the document in
+   the request body and returns the file, so downloads need no stored version.
+   The `GET /api/export/{version_id}.{fmt}` route still exists for local use.
+3. **Storage fails soft.** On a read-only filesystem `backend/db.py` marks itself
+   unavailable and every call returns an empty default. Analysis, generation,
+   scoring, validation and export are pure functions of their inputs and keep
+   working; only version history and the application tracker go quiet.
+
+`requirements.txt` is deliberately slim for the serverless bundle. `pdfplumber`
+(better local PDF column handling) and `anthropic` add ~39 MB and are both lazily
+imported — install them locally with `pip install -r requirements-dev.txt`.
+
+**What you lose on Vercel:** version history and the application tracker, because
+they need a writable disk. Everything that produces a document works. For the
+tracker, run it locally or point `DB_PATH` at a hosted Postgres/Turso.
+
+---
+
 ## Architecture
 
 ### What the rules engine does

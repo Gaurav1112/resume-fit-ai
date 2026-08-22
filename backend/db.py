@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from functools import wraps
 from typing import Any, Iterator
 
 from .config import settings
@@ -78,14 +79,41 @@ def connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+#: False on a read-only filesystem (serverless). The app stays fully functional —
+#: analysis and generation are pure functions; only the version history and the
+#: application tracker need storage, and both degrade to "not available" rather
+#: than taking the request down with them.
+AVAILABLE = True
+
+
 def init() -> None:
-    with connect() as conn:
-        conn.executescript(SCHEMA)
+    global AVAILABLE
+    try:
+        with connect() as conn:
+            conn.executescript(SCHEMA)
+    except (sqlite3.OperationalError, OSError):
+        AVAILABLE = False
+
+
+def _safe(default):
+    """Decorator: storage failures must never fail a request."""
+    def wrap(fn):
+        @wraps(fn)
+        def inner(*args, **kwargs):
+            if not AVAILABLE:
+                return default() if callable(default) else default
+            try:
+                return fn(*args, **kwargs)
+            except (sqlite3.OperationalError, OSError):
+                return default() if callable(default) else default
+        return inner
+    return wrap
 
 
 # --------------------------------------------------------------------------- #
 # Analyses
 # --------------------------------------------------------------------------- #
+@_safe(None)
 def save_analysis(
     analysis_id: str,
     created_at: str,
@@ -108,6 +136,7 @@ def save_analysis(
         )
 
 
+@_safe(None)
 def get_analysis(analysis_id: str) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM analyses WHERE id = ?", (analysis_id,)).fetchone()
@@ -118,6 +147,7 @@ def get_analysis(analysis_id: str) -> dict[str, Any] | None:
     return record
 
 
+@_safe(False)
 def delete_analysis(analysis_id: str) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
@@ -127,6 +157,7 @@ def delete_analysis(analysis_id: str) -> bool:
 # --------------------------------------------------------------------------- #
 # Versions
 # --------------------------------------------------------------------------- #
+@_safe(None)
 def save_version(
     version_id: str,
     analysis_id: str,
@@ -155,6 +186,7 @@ def save_version(
         )
 
 
+@_safe(list)
 def list_versions(limit: int = 200) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
@@ -166,6 +198,7 @@ def list_versions(limit: int = 200) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+@_safe(None)
 def get_version(version_id: str) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM versions WHERE id = ?", (version_id,)).fetchone()
@@ -176,6 +209,7 @@ def get_version(version_id: str) -> dict[str, Any] | None:
     return record
 
 
+@_safe(False)
 def delete_version(version_id: str) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM versions WHERE id = ?", (version_id,))
@@ -192,6 +226,7 @@ APP_FIELDS = [
 ]
 
 
+@_safe(None)
 def save_application(app_id: str, created_at: str, data: dict[str, Any]) -> None:
     values = [data.get(f) for f in APP_FIELDS]
     placeholders = ",".join("?" * (len(APP_FIELDS) + 2))
@@ -203,6 +238,7 @@ def save_application(app_id: str, created_at: str, data: dict[str, Any]) -> None
         )
 
 
+@_safe(list)
 def list_applications() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
@@ -211,6 +247,7 @@ def list_applications() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+@_safe(False)
 def delete_application(app_id: str) -> bool:
     with connect() as conn:
         cur = conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
@@ -224,6 +261,7 @@ INTERVIEW_STATES = {"interview", "screen", "phone screen", "onsite", "final", "o
 OFFER_STATES = {"offer", "accepted", "hired"}
 
 
+@_safe(list)
 def positioning_performance() -> list[dict[str, Any]]:
     """Aggregate outcomes by positioning so you can see what is actually working.
 
@@ -273,6 +311,7 @@ def positioning_performance() -> list[dict[str, Any]]:
     return out
 
 
+@_safe(None)
 def purge_all() -> None:
     with connect() as conn:
         conn.executescript(

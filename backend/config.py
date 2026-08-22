@@ -67,7 +67,14 @@ class Settings:
                 self, "model", os.getenv("LLM_MODEL") or DEFAULT_MODELS.get(self.provider, "")
             )
         object.__setattr__(self, "db_path", Path(self.db_path))
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Read-only filesystem (serverless). Storage is optional — db.init()
+            # will mark itself unavailable and every call degrades gracefully.
+            # Crashing here would take the whole app down at import time for a
+            # feature that is not needed to produce a resume.
+            pass
 
     @property
     def api_key(self) -> str:
