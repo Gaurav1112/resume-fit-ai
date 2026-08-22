@@ -142,11 +142,26 @@ def test_filler_prefixes_are_removed_without_changing_facts():
     ) == "Managing the Kafka cluster."
 
 
-def test_long_bullet_splits_on_clause_separators_when_no_sentence_end():
-    text = "Did a thing - " + ("and another clause " * 30)
+def test_long_bullet_splits_at_sentence_boundaries():
+    text = "Built the service. " + ("Then shipped it to production. " * 12)
     parts = local_engine.split_long(text, limit=200)
     assert len(parts) > 1
-    assert all(len(p) <= 260 for p in parts)
+    assert all(p[0].isupper() and p.endswith(".") for p in parts)
+
+
+def test_a_long_bullet_with_no_sentence_boundary_is_left_whole():
+    """A subordinate clause is not a bullet.
+
+    Splitting "…for a product - authored the ADR and carried it through review"
+    at the dash yields "authored the ADR…" with its subject gone, and the
+    fragment then gets re-ranked away from the clause it belonged to. Leaving the
+    bullet long and reporting it is the better failure: the fix belongs in the
+    master resume.
+    """
+    text = "Did a thing - " + ("and another clause " * 30)
+    parts = local_engine.split_long(text, limit=200)
+    assert len(parts) == 1
+    assert parts[0].startswith("Did a thing")
 
 
 def test_skill_list_flattens_parentheses():

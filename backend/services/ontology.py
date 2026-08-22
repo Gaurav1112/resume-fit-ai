@@ -468,6 +468,16 @@ def category_of(canonical: str) -> str:
     return CATEGORY.get(canonical, "Other")
 
 
+# Canonicals that exist only to make matching work. A JD asking for
+# "observability" is satisfied by Datadog; but "Observability" is not itself a
+# skill to list, and printing it next to Datadog reads as padding.
+CONCEPT_ONLY = {
+    "observability", "monitoring", "unit testing", "nosql", "on call",
+    "authentication", "authorization", "api design", "system design",
+    "scalability", "high availability", "caching", "code review",
+}
+
+
 def known_surface_forms() -> set[str]:
     return set(_SURFACE_TO_CANONICAL)
 

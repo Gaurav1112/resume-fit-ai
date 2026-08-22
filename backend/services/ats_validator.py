@@ -338,6 +338,29 @@ def validate(
             )
         )
 
+    # -- Repeated opening verbs ---------------------------------------------
+    # Distinct from stuffing: three bullets all starting "Led…" is a vocabulary
+    # signal a reader notices long before any density threshold trips.
+    openers = Counter()
+    for bullet in bullets:
+        first = re.match(r"[A-Za-z]+", bullet.strip())
+        if first:
+            openers[first.group(0).lower()] += 1
+    repeated = [f"'{verb}' opens {n} bullets" for verb, n in openers.most_common(6) if n >= 3]
+    checks.append(
+        _check(
+            "varied_action_verbs",
+            "Bullets open with varied action verbs",
+            not repeated,
+            "warning",
+            "Vary the opening verb in your master resume — the engine keeps your "
+            "wording verbatim, so this is one it cannot fix for you."
+            if repeated
+            else "Opening verbs are varied.",
+            repeated,
+        )
+    )
+
     # -- Duplicate lines ----------------------------------------------------
     seen = Counter(b.strip().lower() for b in bullets)
     dupes = [b for b, n in seen.items() if n > 1]

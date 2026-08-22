@@ -81,7 +81,7 @@ def clean_bullet(text: str) -> str:
         if new != out:
             out = new[:1].upper() + new[1:] if new else new
             break
-    out = out.strip(" ;,")
+    out = out.strip(" ;,-")
     if out and out[0].islower():
         out = out[0].upper() + out[1:]
     if out and out[-1] not in ".!?":
@@ -97,10 +97,10 @@ def split_long(text: str, limit: int = 300) -> list[str]:
     """
     if len(text) <= limit:
         return [text]
-    pieces = re.split(r"(?<=[.;])\s+", text)
-    if len(pieces) == 1:
-        # No sentence boundary — fall back to the clause separators resumes use.
-        pieces = [p.strip() for p in re.split(r"\s+[-\u2013\u2014]\s+", text) if p.strip()]
+    # Only sentence boundaries. Splitting at " - " turns a subordinate clause into
+    # a standalone "bullet" that has lost its subject, which reads worse than a
+    # long bullet and cannot be fixed by capitalising it.
+    pieces = re.split(r"(?<=[.])\s+", text)
     parts, current = [], ""
     for sentence in pieces:
         if current and len(current) + len(sentence) + 1 > limit:
@@ -111,17 +111,15 @@ def split_long(text: str, limit: int = 300) -> list[str]:
     if current:
         parts.append(current.strip())
 
-    wrapped: list[str] = []
-    for part in parts:
-        while len(part) > limit:
-            cut = part.rfind(" ", 0, limit)
-            if cut <= 0:
-                break
-            wrapped.append(part[:cut].strip())
-            part = part[cut:].strip()
-        if part:
-            wrapped.append(part)
-    return [p if p[-1:] in ".!?" else p + "." for p in wrapped if len(p) > 2]
+    return [_finish(p) for p in parts if len(p) > 2]
+
+
+def _finish(text: str) -> str:
+    """Tidy terminal punctuation without changing the wording."""
+    out = text.strip().rstrip(" ;,-")
+    if out and out[0].islower():
+        out = out[0].upper() + out[1:]
+    return out if out[-1:] in ".!?" else out + "."
 
 
 def is_bullet(line: str) -> bool:
@@ -587,18 +585,38 @@ def _parse_education(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def _parse_certifications(lines: list[str]) -> list[dict[str, Any]]:
+    """Split a certification line into name and date — and never guess an issuer.
+
+    "Oracle Certified Professional, Java SE 11 Developer - March 2023" has one
+    comma, and it separates the credential from its edition, not the credential
+    from its issuer. Reading the right-hand side as an issuer produced
+    "issuer: Java SE 11 Developer - March", which is simply false. The dash is
+    the reliable separator; the comma is not. Where no issuer is stated, leave it
+    empty rather than inventing one.
+    """
     out: list[dict[str, Any]] = []
     for raw in lines:
         line = sanitise(BULLET_PREFIX.sub("", raw))
         if not line:
             continue
-        year = re.search(r"\b(19|20)\d{2}\b", line)
-        body = re.sub(r"\b(19|20)\d{2}\b", "", line).strip(" ,-–—")
-        parts = [p.strip() for p in body.split(",") if p.strip()]
+
+        parts = re.split(r"\s+[-–—]\s+", line, maxsplit=1)
+        name = parts[0].strip(" ,")
+        tail = parts[1].strip() if len(parts) > 1 else ""
+
+        # The tail is the date expression as the candidate wrote it, kept verbatim
+        # so "2023 to 2026 (recertification in progress)" survives intact.
+        date = tail
+        if not date:
+            year = re.search(r"\b(?:[A-Z][a-z]{2,8}\s+)?(?:19|20)\d{2}\b", line)
+            if year:
+                date = year.group(0)
+                name = line.replace(date, "").strip(" ,-–—")
+
         out.append({
-            "name": parts[0] if parts else body,
-            "issuer": parts[1] if len(parts) > 1 else "",
-            "date": year.group(0) if year else "",
+            "name": name or line,
+            "issuer": "",
+            "date": date,
             "credential_id": "",
         })
     return out
@@ -794,9 +812,22 @@ def _jd_section_of(line: str) -> str | None:
     return None
 
 
+JD_BOILERPLATE = re.compile(
+    r"^(about the (job|role|us|company|team)|job description|the role|"
+    r"role overview|position summary|overview|apply now|job details|"
+    r"full[- ]time|part[- ]time|contract)$",
+    re.I,
+)
+
+
 def analyse_jd(text: str, market: str = "global") -> dict[str, Any]:
     lines = [l for l in text.splitlines()]
-    non_empty = [l.strip() for l in lines if l.strip()]
+    # Job boards prepend boilerplate headings; treating one as the title or the
+    # employer poisons the headline, the summary and the saved version name.
+    non_empty = [
+        l.strip() for l in lines
+        if l.strip() and not JD_BOILERPLATE.match(l.strip().rstrip(":"))
+    ]
 
     job_title = ""
     for line in non_empty[:4]:
@@ -1165,13 +1196,16 @@ def write_resume(
         key=lambda c: (-wanted.get(c, 0.0), ontology.display(c).lower()),
     )
     known = ontology.known_surface_forms()
+    # Concept pseudo-skills exist so a JD asking for "observability" can be
+    # matched by Datadog. They are not things a person writes in a skills grid.
+    concepts = ontology.CONCEPT_ONLY
     grouped: dict[str, list[str]] = {}
     for canon in ranked:
         # An unrecognised token has no reliable display name or category, and
         # would surface as "Adr" or "Agent Orc" in an "Other" bucket. Dropping it
         # from the skills grid costs nothing: it stays in the experience bullets,
         # which is where it is evidenced anyway.
-        if canon not in known:
+        if canon not in known or canon in concepts:
             continue
         category = ontology.category_of(canon)
         if category == "Other":

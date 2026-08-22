@@ -215,7 +215,7 @@ def to_pdf(resume: TailoredResume) -> bytes:
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.platypus import (
-        HRFlowable, ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer,
+        HRFlowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer,
     )
     from xml.sax.saxutils import escape
 
@@ -242,8 +242,8 @@ def to_pdf(resume: TailoredResume) -> bytes:
             alignment=TA_CENTER, spaceAfter=2,
         ),
         "contact": ParagraphStyle(
-            "contact", parent=base["Normal"], fontSize=8.8, leading=11,
-            alignment=TA_CENTER, textColor="#444444", spaceAfter=6,
+            "contact", parent=base["Normal"], fontSize=8.8, leading=11.4,
+            alignment=TA_CENTER, textColor="#444444", spaceAfter=1,
         ),
         "heading": ParagraphStyle(
             "heading", parent=base["Heading2"], fontName="Helvetica-Bold",
@@ -262,7 +262,9 @@ def to_pdf(resume: TailoredResume) -> bytes:
             textColor="#555555", spaceAfter=2,
         ),
         "bullet": ParagraphStyle(
-            "bullet", parent=base["Normal"], fontSize=9.6, leading=12.2, spaceAfter=1.5,
+            "bullet", parent=base["Normal"], fontSize=9.6, leading=12.6,
+            spaceAfter=2.5, leftIndent=11, bulletIndent=1,
+            bulletFontName="Helvetica", bulletFontSize=9.6,
         ),
     }
 
@@ -274,22 +276,31 @@ def to_pdf(resume: TailoredResume) -> bytes:
         story.append(p(resume.contact.name, "name"))
     if resume.headline:
         story.append(p(resume.headline, "headline"))
-    line = contact_line(resume.contact)
-    if line:
-        story.append(p(line, "contact"))
+    reach = " | ".join(
+        x for x in (resume.contact.email, resume.contact.phone, resume.contact.location) if x
+    )
+    links = " | ".join(
+        x for x in (resume.contact.linkedin, resume.contact.github, resume.contact.portfolio)
+        if x
+    )
+    if reach:
+        story.append(p(reach, "contact"))
+    if links:
+        story.append(p(links, "contact"))
 
     def section_heading(text: str):
         story.append(p(text.upper(), "heading"))
         story.append(HRFlowable(width="100%", thickness=0.5, color="#999999",
                                 spaceBefore=1, spaceAfter=4))
 
+    def bullet_flowables(texts: list[str]) -> list:
+        return [
+            Paragraph(escape(t), styles["bullet"], bulletText="\u2022")
+            for t in texts if t.strip()
+        ]
+
     def bullets(texts: list[str]):
-        items = [ListItem(p(t, "bullet"), leftIndent=10) for t in texts if t.strip()]
-        if items:
-            story.append(
-                ListFlowable(items, bulletType="bullet", start="•", leftIndent=12,
-                             bulletFontSize=7, spaceBefore=0, spaceAfter=2)
-            )
+        story.extend(bullet_flowables(texts))
 
     for section in _ordered(resume):
         if section.kind == "summary":
@@ -318,20 +329,25 @@ def to_pdf(resume: TailoredResume) -> bytes:
                 continue
             section_heading(section.heading)
             for role in section.roles:
-                story.append(
+                head: list = [
                     Paragraph(
                         f"<b>{escape(role.title)}</b>, {escape(role.company)}",
                         styles["role"],
                     )
-                )
+                ]
                 meta = " | ".join(
                     x for x in (
                         f"{role.start_date} - {role.end_date}".strip(" -"), role.location
                     ) if x
                 )
                 if meta:
-                    story.append(p(meta, "meta"))
-                bullets([b.text for b in role.bullets])
+                    head.append(p(meta, "meta"))
+
+                role_bullets = bullet_flowables([b.text for b in role.bullets])
+                # Bind the header to its opening bullets so a page break cannot
+                # leave a job title alone at the bottom of a page.
+                story.append(KeepTogether(head + role_bullets[:2]))
+                story.extend(role_bullets[2:])
 
         elif section.kind == "education":
             if not section.education:
