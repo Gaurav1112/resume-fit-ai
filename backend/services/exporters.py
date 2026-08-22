@@ -394,6 +394,106 @@ def to_pdf(resume: TailoredResume) -> bytes:
     return buffer.getvalue()
 
 
+# --------------------------------------------------------------------------- #
+# Cover letter
+# --------------------------------------------------------------------------- #
+def cover_letter_to_txt(letter) -> bytes:
+    from .local_engine import cover_letter_to_text
+
+    return cover_letter_to_text(letter.model_dump()).encode("utf-8")
+
+
+def cover_letter_to_docx(letter) -> bytes:
+    """Same parser-safe construction as the resume: linear paragraphs only."""
+    from docx import Document
+    from docx.shared import Pt
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(11)
+    normal.paragraph_format.space_after = Pt(10)
+    normal.paragraph_format.line_spacing = 1.15
+    for section in doc.sections:
+        section.top_margin = section.bottom_margin = Pt(58)
+        section.left_margin = section.right_margin = Pt(64)
+
+    def para(text: str, *, bold=False, space_after=10):
+        p_ = doc.add_paragraph()
+        p_.paragraph_format.space_after = Pt(space_after)
+        run = p_.add_run(text)
+        run.bold = bold
+        run.font.name = "Calibri"
+        run.font.size = Pt(11)
+
+    if letter.date:
+        para(letter.date)
+    if letter.recipient:
+        para(letter.recipient, space_after=4)
+    if letter.subject:
+        para(letter.subject, bold=True)
+    para(letter.salutation)
+    for paragraph in letter.paragraphs:
+        para(paragraph)
+    para(letter.signoff, space_after=2)
+    para(letter.signature, bold=True, space_after=2)
+    if letter.contact_line:
+        para(letter.contact_line, space_after=0)
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
+def cover_letter_to_pdf(letter) -> bytes:
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from xml.sax.saxutils import escape
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=LETTER,
+        leftMargin=0.9 * inch, rightMargin=0.9 * inch,
+        topMargin=0.8 * inch, bottomMargin=0.8 * inch,
+        title=letter.subject or "Cover letter", author=letter.signature or "",
+    )
+    base = getSampleStyleSheet()
+    body = ParagraphStyle("cl", parent=base["Normal"], fontSize=10.5, leading=15,
+                          spaceAfter=11)
+    bold = ParagraphStyle("clb", parent=body, fontName="Helvetica-Bold")
+
+    story: list = []
+    if letter.date:
+        story.append(Paragraph(escape(letter.date), body))
+    if letter.recipient:
+        story.append(Paragraph(escape(letter.recipient), body))
+    if letter.subject:
+        story.append(Paragraph(escape(letter.subject), bold))
+    story.append(Paragraph(escape(letter.salutation), body))
+    for paragraph in letter.paragraphs:
+        story.append(Paragraph(escape(paragraph), body))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(escape(letter.signoff), body))
+    story.append(Paragraph(escape(letter.signature), bold))
+    if letter.contact_line:
+        story.append(Paragraph(escape(letter.contact_line), body))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+COVER_LETTER_EXPORTERS = {
+    "txt": (cover_letter_to_txt, "text/plain; charset=utf-8", "txt"),
+    "docx": (
+        cover_letter_to_docx,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "docx",
+    ),
+    "pdf": (cover_letter_to_pdf, "application/pdf", "pdf"),
+}
+
+
 EXPORTERS = {
     "txt": (to_txt, "text/plain; charset=utf-8", "txt"),
     "docx": (

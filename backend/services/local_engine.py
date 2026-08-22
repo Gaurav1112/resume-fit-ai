@@ -484,9 +484,17 @@ def _parse_experience(lines: list[str]) -> list[dict[str, Any]]:
         )
         role["metrics"] = list({m.group(0) for m in METRIC_RE.finditer(text)})[:10]
         role["achievements"] = [b for b in role["bullets"] if METRIC_RE.search(b)][:6]
+        # Require a person-shaped object ("team", "engineers", "juniors"), or a
+        # verb that only applies to people. Otherwise "Designed and led LBAC"
+        # counts as leadership evidence, which it is not.
         role["leadership"] = [
             b for b in role["bullets"]
-            if re.search(r"\b(led|mentor|managed|coach|hired|onboard|review)", b, re.I)
+            if re.search(
+                r"\b(mentor\w*|coach\w*|hired|onboard\w*)\b"
+                r"|\b(led|leading|managed|manage)\b[^.]{0,40}"
+                r"\b(team|engineers?|developers?|people|juniors?|reports?|squad)\b",
+                b, re.I,
+            )
         ][:5]
     return roles
 
@@ -772,6 +780,13 @@ def parse_resume(text: str) -> dict[str, Any]:
         ),
     )
     leadership = [b for r in roles for b in r["leadership"]]
+    leadership.sort(
+        key=lambda b: (
+            0 if re.match(r"^(mentor|led|managed|coach|hired)", b, re.I) else 1,
+            0 if re.search(r"\b\d+\s+(junior |senior )?engineers?\b", b, re.I) else 1,
+            len(b),
+        )
+    )
 
     return {
         "contact": contact,
@@ -1457,3 +1472,182 @@ def simulate_recruiter(
         "top_strengths": strengths or ["No strong matches detected."],
         "top_weaknesses": weaknesses[:5],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Cover letter
+# --------------------------------------------------------------------------- #
+# Phrases a generator must never produce. It knows nothing about the company, so
+# any sentence expressing admiration, cultural fit or motivation would be
+# invented — the same class of fabrication as an invented metric, and the reason
+# most generated cover letters read as worthless.
+BANNED_SENTIMENT = (
+    "long admired", "passionate about", "excited by your mission",
+    "dream company", "perfect fit", "culture",
+)
+
+
+def write_cover_letter(
+    profile: dict[str, Any],
+    jd: dict[str, Any],
+    matrix: list[dict[str, Any]],
+    positioning: dict[str, Any],
+    master_text: str,
+    today: str = "",
+) -> dict[str, Any]:
+    """Assemble a JD-specific cover letter from parsed facts and verbatim evidence.
+
+    Every sentence that asserts something about the candidate is either a field
+    parsed from the resume or one of their own bullets reproduced word for word.
+    The connective prose states only what is true by construction ("I'm applying
+    for X", "Two examples"), so the letter cannot contain a claim the resume does
+    not already make.
+    """
+    contact = profile.get("contact", {}) or {}
+    name = contact.get("name", "") or ""
+    company = (jd.get("company") or "").strip()
+    job_title = (jd.get("job_title") or "the role").strip()
+    target_title = positioning.get("target_title") or profile.get("current_title") or "Engineer"
+
+    wanted: dict[str, float] = {}
+    for row in matrix:
+        if row.get("score", 0) >= 0.35:
+            wanted[row["canonical"]] = max(
+                wanted.get(row["canonical"], 0.0),
+                PRIORITY_WEIGHT.get(row.get("priority", "P1"), 1.0) * row["score"],
+            )
+
+    # --- opening ----------------------------------------------------------
+    years = profile.get("total_years_experience")
+    years_clause = f"{round(years)}+ years" if years and years >= 1 else "several years"
+    jd_domain = jd.get("domain") or ""
+    domain = next(
+        (d for d in (profile.get("domains") or [])
+         if jd_domain and ontology.normalise(d) == ontology.normalise(jd_domain)),
+        profile.get("primary_domain") or "",
+    )
+
+    proven = [
+        r for r in matrix
+        if r.get("score", 0) >= 0.85 and r.get("priority") in ("P0", "P1")
+    ]
+    proven.sort(key=lambda r: (r["priority"], -r["score"]))
+    headline_skills = [ontology.display(r["canonical"]) for r in proven[:4]]
+
+    opening = (
+        f"I'm applying for the {job_title} role"
+        + (f" at {company}" if company else "")
+        + f". I'm a {target_title} with {years_clause} of experience"
+        + (f" in {domain}" if domain else "")
+        + (
+            f", and the requirements this role leads with — "
+            + ", ".join(headline_skills[:-1])
+            + f" and {headline_skills[-1]} — are the areas I've spent that time in."
+            if len(headline_skills) > 1
+            else "."
+        )
+    )
+
+    # --- evidence paragraphs ---------------------------------------------
+    # One paragraph per top requirement, answered with the candidate's own
+    # highest-relevance bullet for it. Each bullet is used at most once.
+    achievements: list[str] = []
+    for role in profile.get("roles", []):
+        for bullet in role.get("bullets", []):
+            achievements.append(bullet)
+
+    body: list[str] = []
+    evidence_used: list[str] = []
+    consumed: set[str] = set()
+
+    for row in proven:
+        if len(body) >= 3:
+            break
+        canon = row["canonical"]
+        candidates = [
+            b for b in achievements
+            if b not in consumed and canon in ontology.extract_known_terms(b)
+        ]
+        if not candidates:
+            continue
+        best = max(candidates, key=lambda b: _bullet_relevance(b, wanted))
+        consumed.add(best)
+        label = ontology.display(canon)
+        body.append(f"On {label}: {best.rstrip('.')}.")
+        evidence_used.append(f"{row['requirement']} → {best[:70]}…")
+
+    # Fall back to the strongest quantified achievements if the matrix produced
+    # nothing usable, so the letter is never a bare template.
+    if not body:
+        ranked = sorted(achievements, key=lambda b: -_bullet_relevance(b, wanted))
+        for bullet in ranked[:2]:
+            body.append(bullet.rstrip(".") + ".")
+            evidence_used.append(f"(general) → {bullet[:70]}…")
+
+    # --- leadership paragraph, only where the JD asks and evidence exists --
+    if jd.get("leadership_expected") and profile.get("has_leadership_experience"):
+        lead = profile.get("leadership_summary", "")
+        if lead and lead not in consumed:
+            body.append("On the leadership side: " + lead[0].lower() + lead[1:].rstrip(".") + ".")
+            evidence_used.append("Leadership → " + lead[:70] + "…")
+
+    # --- closing ----------------------------------------------------------
+    closing_bits: list[str] = []
+    mode = (jd.get("work_mode") or "").lower()
+    if mode in {"remote", "hybrid", "onsite"}:
+        closing_bits.append(f"I'm set up for {mode} work")
+    if contact.get("location"):
+        closing_bits.append(f"and based in {contact['location']}")
+    closing = (
+        (" ".join(closing_bits) + ". ") if closing_bits else ""
+    ) + "I'd welcome the chance to talk through any of the above."
+
+    contact_line = " | ".join(
+        x for x in (contact.get("email"), contact.get("phone"), contact.get("linkedin")) if x
+    )
+
+    # An unmet mandatory requirement is the candidate's decision to make, not
+    # something to volunteer to the employer. Surface it in the UI instead.
+    unmet = [r["requirement"] for r in matrix
+             if r.get("priority") == "P0" and r.get("score", 0) < 0.6]
+    omitted = (
+        "Not mentioned in this letter (no supporting evidence): "
+        + ", ".join(unmet[:5])
+        if unmet else ""
+    )
+
+    letter = {
+        "date": today,
+        "recipient": f"{company} Hiring Team" if company else "Hiring Team",
+        "subject": f"Application — {job_title}" + (f", {company}" if company else ""),
+        "salutation": "Dear Hiring Team,",
+        "paragraphs": [sanitise(p) for p in ([opening] + body + [closing]) if p.strip()],
+        "signoff": "Kind regards,",
+        "signature": name,
+        "contact_line": contact_line,
+        "evidence_used": evidence_used,
+        "omitted_note": omitted,
+    }
+
+    joined = " ".join(letter["paragraphs"]).lower()
+    assert not any(b in joined for b in BANNED_SENTIMENT), (
+        "cover letter contained invented sentiment"
+    )
+    return letter
+
+
+def cover_letter_to_text(letter: dict[str, Any]) -> str:
+    lines: list[str] = []
+    if letter.get("date"):
+        lines += [letter["date"], ""]
+    if letter.get("recipient"):
+        lines += [letter["recipient"], ""]
+    if letter.get("subject"):
+        lines += [letter["subject"], ""]
+    lines += [letter.get("salutation", "Dear Hiring Team,"), ""]
+    for paragraph in letter.get("paragraphs", []):
+        lines += [paragraph, ""]
+    lines += [letter.get("signoff", "Kind regards,"), letter.get("signature", "")]
+    if letter.get("contact_line"):
+        lines.append(letter["contact_line"])
+    return "\n".join(lines).rstrip() + "\n"

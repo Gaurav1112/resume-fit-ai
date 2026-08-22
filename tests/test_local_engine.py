@@ -6,6 +6,8 @@ every downstream score depends on getting the employment history right.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from backend.services import dates, local_engine, ontology, text_extract
@@ -307,3 +309,90 @@ def test_years_claim_is_omitted_when_dates_do_not_support_one():
 def test_engine_is_deterministic():
     text = open("samples/master_resume.txt", encoding="utf-8").read()
     assert local_engine.parse_resume(text) == local_engine.parse_resume(text)
+
+
+# --------------------------------------------------------------------------- #
+# Cover letter — same truthfulness guarantee as the resume
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def letter_fixture():
+    resume_text = open("samples/master_resume.txt", encoding="utf-8").read()
+    profile = local_engine.parse_resume(resume_text)
+    jd = local_engine.analyse_jd(
+        open("samples/job_description.txt", encoding="utf-8").read()
+    )
+    matrix = [
+        {"canonical": r["canonical"], "priority": r["priority"], "score": 1.0,
+         "requirement": r["text"]}
+        for r in jd["requirements"]
+    ]
+    positioning = local_engine.decide_positioning(profile, jd, matrix)
+    letter = local_engine.write_cover_letter(
+        profile, jd, matrix, positioning, resume_text, today="1 January 2026"
+    )
+    return profile, jd, letter
+
+
+def test_cover_letter_has_the_expected_shape(letter_fixture):
+    _profile, jd, letter = letter_fixture
+    assert letter["salutation"].startswith("Dear")
+    assert jd["job_title"] in letter["paragraphs"][0]
+    assert len(letter["paragraphs"]) >= 3
+    assert letter["signature"]
+
+
+def test_cover_letter_body_is_verbatim_resume_content(letter_fixture):
+    """The core guarantee: no body sentence asserts anything new about the candidate."""
+    profile, _jd, letter = letter_fixture
+    # Case-insensitive: a paragraph reading "On the leadership side: mentored 4
+    # engineers…" lowercases the source bullet's first letter to sit after the
+    # colon. That is grammar, not a change of content.
+    source = {b.rstrip(".").lower() for role in profile["roles"] for b in role["bullets"]}
+    # Skip opening and closing, which are template prose making no factual claim.
+    for paragraph in letter["paragraphs"][1:-1]:
+        _label, _, evidence = paragraph.partition(": ")
+        body = (evidence or paragraph).rstrip(".").lower()
+        assert any(body in s or s in body for s in source), (
+            f"cover letter paragraph has no source bullet: {paragraph!r}"
+        )
+
+
+def test_cover_letter_invents_no_numbers(letter_fixture):
+    profile, _jd, letter = letter_fixture
+    master = open("samples/master_resume.txt", encoding="utf-8").read()
+    source_digits = set(re.findall(r"\d[\d,.]*", master))
+    for paragraph in letter["paragraphs"]:
+        for number in re.findall(r"\d[\d,.]*", paragraph):
+            # Years-of-experience is derived from the employment dates.
+            if number == str(round(profile["total_years_experience"] or 0)):
+                continue
+            assert number in source_digits, f"invented number {number!r} in cover letter"
+
+
+def test_cover_letter_contains_no_invented_sentiment(letter_fixture):
+    _profile, _jd, letter = letter_fixture
+    joined = " ".join(letter["paragraphs"]).lower()
+    for phrase in local_engine.BANNED_SENTIMENT:
+        assert phrase not in joined
+
+
+def test_cover_letter_does_not_volunteer_gaps(letter_fixture):
+    """Unmet requirements are reported to the candidate, never to the employer."""
+    _profile, jd, letter = letter_fixture
+    unsupported = local_engine.write_cover_letter(
+        {"contact": {"name": "A"}, "roles": [], "domains": [],
+         "total_years_experience": 5.0, "current_title": "Engineer"},
+        jd,
+        [{"canonical": "rust", "priority": "P0", "score": 0.0, "requirement": "Rust"}],
+        {"target_title": "Engineer"},
+        "master",
+    )
+    assert "rust" not in " ".join(unsupported["paragraphs"]).lower()
+    assert "Rust" in unsupported["omitted_note"]
+
+
+def test_cover_letter_renders_to_text(letter_fixture):
+    _profile, _jd, letter = letter_fixture
+    text = local_engine.cover_letter_to_text(letter)
+    assert "Dear" in text and "Kind regards," in text
+    assert text.endswith("\n")

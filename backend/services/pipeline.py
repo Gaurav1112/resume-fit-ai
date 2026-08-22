@@ -33,6 +33,7 @@ from ..models.schemas import (
     AnalysisResult,
     CandidateProfile,
     Certification,
+    CoverLetter,
     ChangeExplanation,
     Education,
     GenerationResult,
@@ -64,7 +65,9 @@ from ..prompts import (
     WRITER_USER,
     schemas,
 )
-from . import ats_validator, diffing, matching, ontology, scoring, truth_validator
+from . import (
+    ats_validator, diffing, local_engine, matching, ontology, scoring, truth_validator,
+)
 from .loops import RepairLoop, lift_loop, merge_reports
 from .render import to_plain_text
 
@@ -694,6 +697,19 @@ def generate(
     resume: TailoredResume = ctx["resume"]
     plain = to_plain_text(resume)
 
+    # The cover letter is deterministic and derives from the same matrix, so it
+    # costs nothing to produce and cannot disagree with the resume.
+    letter_payload = local_engine.write_cover_letter(
+        ctx["profile"].model_dump(),
+        ctx["jd"].model_dump(),
+        [r.model_dump() for r in _matrix_of(ctx)],
+        ctx["positioning"].model_dump(),
+        ctx["resume_text"],
+        today=datetime.now(timezone.utc).strftime("%d %B %Y"),
+    )
+    cover_letter = CoverLetter.model_validate(letter_payload)
+    cover_letter_text = local_engine.cover_letter_to_text(letter_payload)
+
     ats_report: ValidationReport = ctx.get("last_ats") or ValidationReport()
     truth_deterministic: ValidationReport = ctx.get("last_truth") or ValidationReport()
     truth_llm: ValidationReport = ctx.get("truth_audit") or ValidationReport()
@@ -732,6 +748,8 @@ def generate(
         version_name=version_name,
         resume=resume,
         plain_text=plain,
+        cover_letter=cover_letter,
+        cover_letter_text=cover_letter_text,
         scores=scores,
         ats_report=ats_report,
         truth_report=truth_report,

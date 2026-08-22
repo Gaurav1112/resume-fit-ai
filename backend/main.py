@@ -352,6 +352,35 @@ def export(version_id: str, fmt: str) -> Response:
     )
 
 
+@app.get("/api/cover-letter/{version_id}.{fmt}")
+def export_cover_letter(version_id: str, fmt: str) -> Response:
+    fmt = fmt.lower()
+    if fmt not in exporters.COVER_LETTER_EXPORTERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{fmt}'. Use one of: "
+                   f"{', '.join(exporters.COVER_LETTER_EXPORTERS)}",
+        )
+    record = db.get_version(version_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Version not found.")
+
+    result = GenerationResult.model_validate(record["payload"])
+    render, media_type, extension = exporters.COVER_LETTER_EXPORTERS[fmt]
+    data = render(result.cover_letter)
+
+    name = result.resume.contact.name or "candidate"
+    filename = (
+        exporters.safe_filename(f"{name}_CoverLetter_{result.version_name}")
+        + f".{extension}"
+    )
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Application tracker + learning loop
 # --------------------------------------------------------------------------- #

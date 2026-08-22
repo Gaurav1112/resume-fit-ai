@@ -482,6 +482,7 @@ function renderGeneration(g) {
     };
   });
 
+  renderCoverLetter(g);
   renderLoop(g.diff.loop, g.diff.lift);
   renderChanges(g);
   prefillTracker(g);
@@ -565,6 +566,33 @@ function renderLoop(loop, lift) {
     box.appendChild(row);
   });
 }
+
+function renderCoverLetter(g) {
+  $("coverLetterPreview").textContent = g.cover_letter_text || "(not generated)";
+  const cl = g.cover_letter || {};
+  $("clOmitted").innerHTML = cl.omitted_note
+    ? `<div class="item warn"><h4>Deliberately not mentioned</h4>
+         <p>${esc(cl.omitted_note)}</p>
+         <p style="margin-top:5px">A cover letter should not volunteer gaps. This is
+         here so <b>you</b> know what the letter is silent about before you send it.</p>
+       </div>`
+    : `<div class="item ok"><p>Every mandatory requirement is answered in the letter.</p></div>`;
+  $("clEvidence").innerHTML = (cl.evidence_used || [])
+    .map((e) => `<div class="item info"><p>${esc(e)}</p></div>`)
+    .join("") || `<p class="hint">No evidence mapping recorded.</p>`;
+}
+
+const downloadLetter = (fmt) => {
+  if (!state.generation) return;
+  window.location.href = `/api/cover-letter/${state.generation.version_id}.${fmt}`;
+};
+$("clTxt").onclick = () => downloadLetter("txt");
+$("clPdf").onclick = () => downloadLetter("pdf");
+$("clDocx").onclick = () => downloadLetter("docx");
+$("clCopy").onclick = async () => {
+  await navigator.clipboard.writeText(state.generation.cover_letter_text);
+  toast("Cover letter copied");
+};
 
 /* ----------------------------------------------------------- changes tab */
 function renderChanges(g) {

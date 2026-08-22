@@ -232,6 +232,25 @@ class TailoredResume(Base):
     sections: list[ResumeSection] = Field(default_factory=list)
 
 
+class CoverLetter(Base):
+    """A JD-specific cover letter assembled from parsed facts and verbatim evidence.
+
+    `evidence_used` records which requirement each body paragraph answers, so the
+    UI can show that no paragraph is decorative.
+    """
+
+    date: str = ""
+    recipient: str = "Hiring Team"
+    subject: str = ""
+    salutation: str = ""
+    paragraphs: list[str] = Field(default_factory=list)
+    signoff: str = "Kind regards,"
+    signature: str = ""
+    contact_line: str = ""
+    evidence_used: list[str] = Field(default_factory=list)
+    omitted_note: str = ""
+
+
 class ChangeExplanation(Base):
     change: str
     reason: str
@@ -322,6 +341,8 @@ class GenerationResult(Base):
     version_name: str
     resume: TailoredResume
     plain_text: str
+    cover_letter: CoverLetter = Field(default_factory=CoverLetter)
+    cover_letter_text: str = ""
     scores: ScoreReport
     ats_report: ValidationReport
     truth_report: ValidationReport
