@@ -1338,13 +1338,17 @@ def _compose_summary(
     optional: list[str] = []
     differentiators = positioning.get("differentiators") or []
     if differentiators:
-        optional.append(differentiators[0].rstrip(".") + ".")
+        # Pick the achievement most relevant to *this* JD, not whichever happened
+        # to come first. A summary's one supporting sentence is prime real estate.
+        best = max(differentiators, key=lambda d: _bullet_relevance(d, wanted))
+        optional.append(best.rstrip(".") + ".")
     if profile.get("has_leadership_experience") and jd.get("leadership_expected"):
         leadership = profile.get("leadership_summary", "")
         if leadership:
             optional.append(leadership.rstrip(".") + ".")
 
-    for sentence in sorted(optional, key=lambda s: len(s.split())):
+    # Relevance decides *what* to say; the budget decides how much fits.
+    for sentence in optional:
         if room_for(sentence):
             parts.append(sentence)
 
