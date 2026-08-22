@@ -103,10 +103,29 @@ def to_plain_text(resume: TailoredResume, *, width: int = 98) -> str:
 
 
 def all_bullet_texts(resume: TailoredResume) -> list[str]:
+    """Every candidate-authored line, summary paragraphs included.
+
+    Used by the truth gate, which must inspect the summary too.
+    """
     out: list[str] = []
     for section in resume.sections:
         out.extend(b.text for b in section.bullets)
         for role in section.roles:
             out.extend(b.text for b in role.bullets)
         out.extend(section.paragraphs)
+    return [t for t in out if t and t.strip()]
+
+
+def bullet_texts_only(resume: TailoredResume) -> list[str]:
+    """Only true bullets — no summary paragraphs.
+
+    The ATS bullet-length and bullet-substance checks measure bullets. A summary
+    paragraph is legitimately longer than a bullet, and counting it as one would
+    fail a perfectly well-formed document.
+    """
+    out: list[str] = []
+    for section in resume.sections:
+        out.extend(b.text for b in section.bullets)
+        for role in section.roles:
+            out.extend(b.text for b in role.bullets)
     return [t for t in out if t and t.strip()]

@@ -142,13 +142,14 @@ ALIAS_GROUPS: dict[str, list[str]] = {
     "git": ["version control", "github", "gitlab", "bitbucket"],
 
     # ---- observability ---------------------------------------------------
+    "on call": ["on-call", "oncall", "on call rotation", "incident response"],
     "prometheus": [],
     "grafana": [],
     "datadog": ["data dog"],
     "new relic": ["newrelic"],
     "splunk": [],
     "opentelemetry": ["otel", "distributed tracing", "jaeger", "zipkin"],
-    "pagerduty": ["on-call", "oncall"],
+    "pagerduty": [],
     "sentry": [],
 
     # ---- testing ---------------------------------------------------------
@@ -264,7 +265,7 @@ _assign("DevOps & Platform", [
 ])
 _assign("Observability", [
     "prometheus", "grafana", "datadog", "new relic", "splunk", "opentelemetry",
-    "pagerduty", "sentry",
+    "pagerduty", "sentry", "on call",
 ])
 _assign("Testing", [
     "junit", "pytest", "jest", "cypress", "tdd", "contract testing", "load testing",
@@ -287,6 +288,9 @@ _assign("Leadership", [
     "project management", "documentation", "communication", "ownership", "agile",
     "code review",
 ])
+_assign("Observability", ["observability", "monitoring"])
+_assign("Testing", ["unit testing"])
+_assign("Databases", ["nosql"])
 _assign("Domain", [
     "fintech", "saas", "e-commerce", "healthcare", "erp", "accounting software",
 ])
@@ -466,6 +470,67 @@ def category_of(canonical: str) -> str:
 
 def known_surface_forms() -> set[str]:
     return set(_SURFACE_TO_CANONICAL)
+
+
+# --------------------------------------------------------------------------- #
+# Display names
+# --------------------------------------------------------------------------- #
+# The canonical id is lowercase for matching; the resume needs the form a human
+# writes. Only the cases plain title-casing gets wrong are listed.
+DISPLAY: dict[str, str] = {
+    "aws": "AWS", "gcp": "GCP", "azure": "Azure", "aks": "AKS", "eks": "EKS",
+    "gke": "GKE", "ec2": "EC2", "s3": "S3", "sqs": "SQS", "sns": "SNS",
+    "pubsub": "Pub/Sub", "cicd": "CI/CD", "csharp": "C#", "cpp": "C++", "c": "C",
+    "r": "R", "sql": "SQL", "nosql": "NoSQL", "html": "HTML", "css": "CSS",
+    "rest": "REST", "grpc": "gRPC", "graphql": "GraphQL", "soap": "SOAP",
+    "openapi": "OpenAPI", "jwt": "JWT", "oauth": "OAuth 2.0", "rbac": "RBAC",
+    "abac": "ABAC", "owasp": "OWASP", "etl": "ETL", "llm": "LLMs", "rag": "RAG",
+    "mcp": "MCP", "tdd": "TDD", "ddd": "Domain-Driven Design", "erp": "ERP",
+    "saas": "SaaS", "kafka": "Apache Kafka", "postgresql": "PostgreSQL",
+    "mysql": "MySQL", "mongodb": "MongoDB", "dynamodb": "DynamoDB",
+    "elasticsearch": "Elasticsearch", "clickhouse": "ClickHouse",
+    "bigquery": "BigQuery", "redshift": "Redshift", "rabbitmq": "RabbitMQ",
+    "activemq": "ActiveMQ", "nats": "NATS", "kinesis": "Kinesis",
+    "oracle db": "Oracle Database", "sql server": "SQL Server", "neo4j": "Neo4j",
+    "javascript": "JavaScript", "typescript": "TypeScript", "nodejs": "Node.js",
+    "nextjs": "Next.js", "nestjs": "NestJS", "vue": "Vue.js", "react": "React",
+    "dotnet": ".NET", "rails": "Ruby on Rails", "php": "PHP", "go": "Go",
+    "kubernetes": "Kubernetes", "openshift": "OpenShift", "argocd": "Argo CD",
+    "github actions": "GitHub Actions", "gitlab ci": "GitLab CI",
+    "circleci": "CircleCI", "nginx": "NGINX", "istio": "Istio",
+    "opentelemetry": "OpenTelemetry", "pagerduty": "PagerDuty", "on call": "On-Call & Incident Response",
+    "new relic": "New Relic", "datadog": "Datadog", "junit": "JUnit",
+    "pytest": "pytest", "jest": "Jest", "cypress": "Cypress",
+    "spring boot": "Spring Boot", "spring": "Spring", "fastapi": "FastAPI",
+    "express": "Express.js", "langchain": "LangChain", "pandas": "pandas",
+    "openai api": "OpenAI API", "anthropic api": "Anthropic API",
+    "e-commerce": "E-commerce", "fintech": "FinTech",
+    "domain driven design": "Domain-Driven Design",
+    "event driven architecture": "Event-Driven Architecture",
+    "cloudformation": "CloudFormation", "helm": "Helm", "terraform": "Terraform",
+    "ansible": "Ansible", "pulumi": "Pulumi", "jenkins": "Jenkins",
+    "docker": "Docker", "redis": "Redis", "linux": "Linux", "git": "Git",
+    "bash": "Bash", "spark": "Apache Spark", "flink": "Apache Flink",
+    "airflow": "Apache Airflow", "snowflake": "Snowflake",
+    "lambda": "AWS Lambda", "cloud run": "Cloud Run", "websockets": "WebSockets",
+    "cassandra": "Apache Cassandra", "hibernate": "Hibernate", "django": "Django",
+    "flask": "Flask", "svelte": "Svelte", "angular": "Angular", "redux": "Redux",
+    "webpack": "Webpack", "scala": "Scala", "kotlin": "Kotlin", "rust": "Rust",
+    "swift": "Swift", "ruby": "Ruby", "elixir": "Elixir", "java": "Java",
+    "python": "Python", "prometheus": "Prometheus", "grafana": "Grafana",
+    "splunk": "Splunk", "sentry": "Sentry", "gin": "Gin",
+    "microservices": "Microservices", "serverless": "Serverless",
+}
+
+_ACRONYMS = {"api", "aws", "gcp", "sql", "ci", "cd", "ui", "ux", "ml", "ai", "sre"}
+
+
+def display(canonical: str) -> str:
+    """Human-facing name for a canonical skill id."""
+    if canonical in DISPLAY:
+        return DISPLAY[canonical]
+    words = canonical.replace("-", " ").split()
+    return " ".join(w.upper() if w in _ACRONYMS else w.capitalize() for w in words)
 
 
 def extract_known_terms(text: str) -> set[str]:

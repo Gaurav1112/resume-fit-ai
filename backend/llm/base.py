@@ -66,7 +66,13 @@ class Usage:
 
 @dataclass
 class Call:
-    """One structured-output request."""
+    """One structured-output request.
+
+    `payload` carries the same inputs as `user`, but structured. Model providers
+    ignore it and read the rendered prompt; the local rules engine reads it
+    directly. That is what lets the no-API-key engine drop into the pipeline
+    without any stage knowing which kind of provider it is talking to.
+    """
 
     stage: str
     system: str
@@ -75,6 +81,7 @@ class Call:
     max_tokens: int = 16000
     cacheable_prefix: str = ""       # large stable content, cached where supported
     effort: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
@@ -109,6 +116,9 @@ def extract_json(text: str) -> dict[str, Any]:
 class Provider(ABC):
     name: str = "abstract"
     supports_native_schema: bool = False
+    #: True when the same inputs always yield byte-identical output. The repair
+    #: loop uses this to skip retries that cannot possibly change the result.
+    deterministic: bool = False
 
     def __init__(self, model: str, effort: str = "high") -> None:
         self.model = model

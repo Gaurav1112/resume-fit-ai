@@ -111,6 +111,7 @@ def _stage_profile(ctx: Context) -> CandidateProfile:
             user=PROFILE_USER.format(resume_text=resume_text),
             schema=schemas.PROFILE_SCHEMA,
             max_tokens=16000,
+            payload={"resume_text": resume_text},
         )
     )
     payload["skills"] = _groups_to_dict(payload.pop("skill_groups", None))
@@ -134,6 +135,10 @@ def _stage_jd(ctx: Context) -> JDAnalysis:
             user=JD_USER.format(jd_text=ctx["jd_text"], market=ctx.get("market", "global")),
             schema=schemas.JD_SCHEMA,
             max_tokens=12000,
+            payload={
+                "jd_text": ctx["jd_text"],
+                "market": ctx.get("market", "global"),
+            },
         )
     )
     jd = JDAnalysis.model_validate(payload)
@@ -198,6 +203,7 @@ def _stage_refine(ctx: Context) -> list[MatchRow]:
             user=REFINE_USER.format(evidence=evidence_blob, rows=rows_blob),
             schema=schemas.REFINE_SCHEMA,
             max_tokens=12000,
+            payload={"rows": [r.model_dump() for r in ambiguous]},
         )
     )
 
@@ -271,6 +277,11 @@ def _stage_positioning(ctx: Context) -> Positioning:
             ),
             schema=schemas.POSITIONING_SCHEMA,
             max_tokens=6000,
+            payload={
+                "profile": profile.model_dump(),
+                "jd": jd.model_dump(),
+                "matrix": [r.model_dump() for r in matrix],
+            },
         )
     )
     positioning = Positioning.model_validate(payload)
@@ -461,6 +472,14 @@ def _write_resume(ctx: Context, feedback: list[str], iteration: int) -> Tailored
             ),
             schema=schemas.WRITER_SCHEMA,
             max_tokens=16000,
+            payload={
+                "profile": profile.model_dump(),
+                "jd": jd.model_dump(),
+                "matrix": [r.model_dump() for r in matrix],
+                "positioning": positioning.model_dump(),
+                "master_text": ctx["resume_text"],
+                "feedback": feedback,
+            },
         )
     )
     resume, changes = _assemble(payload, ctx)
@@ -469,7 +488,9 @@ def _write_resume(ctx: Context, feedback: list[str], iteration: int) -> Tailored
 
 
 def _validate_candidate(ctx: Context, resume: TailoredResume) -> ValidationReport:
-    ats = ats_validator.validate(resume, ctx["jd"], _matrix_of(ctx))
+    ats = ats_validator.validate(
+        resume, ctx["jd"], _matrix_of(ctx), master_text=ctx["resume_text"]
+    )
     truth = truth_validator.validate(resume, ctx["profile"], ctx["resume_text"])
     ctx.set("last_ats", ats)
     ctx.set("last_truth", truth)
@@ -492,11 +513,18 @@ def _score_candidate(ctx: Context, resume: TailoredResume) -> float:
 
 def _stage_write_loop(ctx: Context) -> TailoredResume:
     """Repair loop, then an optional loop-until-dry keyword lift."""
+    provider: Provider = ctx["provider"]
+    max_iterations = int(ctx.get("max_repair_iterations", 3))
+    if getattr(provider, "deterministic", False):
+        # Re-running a deterministic writer yields byte-identical output, so a
+        # second pass can only burn time. One pass, then report honestly.
+        max_iterations = 1
+
     loop = RepairLoop[TailoredResume](
         produce=lambda feedback, i: _write_resume(ctx, feedback, i),
         validate=lambda r: _validate_candidate(ctx, r),
         score=lambda r: _score_candidate(ctx, r),
-        max_iterations=int(ctx.get("max_repair_iterations", 3)),
+        max_iterations=max_iterations,
         min_gain=0.75,
     )
     result = loop.run()
@@ -512,7 +540,9 @@ def _stage_write_loop(ctx: Context) -> TailoredResume:
     lift_rounds = int(ctx.get("lift_rounds", 1))
     if result.converged and lift_rounds > 0:
         def find_missing(candidate: TailoredResume) -> list[str]:
-            report = ats_validator.validate(candidate, ctx["jd"], _matrix_of(ctx))
+            report = ats_validator.validate(
+                candidate, ctx["jd"], _matrix_of(ctx), master_text=ctx["resume_text"]
+            )
             for check in report.checks:
                 if check.id == "supported_keywords_surfaced" and not check.passed:
                     return check.offenders
@@ -549,6 +579,7 @@ def _stage_truth_audit(ctx: Context) -> ValidationReport:
             ),
             schema=schemas.TRUTH_SCHEMA,
             max_tokens=10000,
+            payload={"generated": to_plain_text(resume), "master": ctx["resume_text"]},
         )
     )
     return truth_validator.report_from_llm_audit(payload)
@@ -567,6 +598,11 @@ def _stage_recruiter(ctx: Context) -> RecruiterView:
             ),
             schema=schemas.RECRUITER_SCHEMA,
             max_tokens=5000,
+            payload={
+                "resume_text": to_plain_text(ctx["resume"]),
+                "jd": jd.model_dump(),
+                "matrix": [r.model_dump() for r in _matrix_of(ctx)],
+            },
         )
     )
     view = RecruiterView.model_validate(payload)

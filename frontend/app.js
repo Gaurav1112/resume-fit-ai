@@ -66,7 +66,8 @@ function toast(msg, bad = false) {
 let stepTimer;
 function showOverlay(title, steps) {
   $("loaderTitle").textContent = title;
-  $("loaderText").textContent = "This runs several model calls — usually 30–90 seconds.";
+  $("loaderText").textContent =
+    "Running locally — no network calls. This usually takes about a second.";
   const list = $("loaderSteps");
   list.innerHTML = "";
   steps.forEach((s) => list.appendChild(el("li", "", esc(s))));
@@ -175,7 +176,7 @@ async function loadConfig() {
     const health = await api("/api/health");
     $("providerPill").textContent = `${health.provider} · ${health.model}`;
     if (!health.configured) {
-      toast("No API key configured — set ANTHROPIC_API_KEY in .env", true);
+      toast("Configured provider needs an API key — or set LLM_PROVIDER=local", true);
     }
   } catch (e) {
     $("providerPill").textContent = "backend unreachable";
@@ -223,11 +224,11 @@ $("analyzeBtn").onclick = async () => {
 
   showOverlay("Analyzing", [
     "Parsing your resume into a structured profile",
-    "Extracting and classifying JD requirements",
+    "Extracting and classifying JD requirements (P0–P3)",
     "Building the evidence index",
     "Matching requirements against evidence",
-    "Adjudicating ambiguous matches",
-    "Analysing gaps and choosing positioning",
+    "Analysing gaps",
+    "Choosing target positioning",
   ]);
   try {
     state.analysis = await api("/api/analyze", { method: "POST", body: fd });
@@ -311,7 +312,7 @@ function renderAnalysis(a) {
   renderBreakdown($("baselineBreakdown"), a.baseline_scores);
   renderTrace($("analysisTrace"), a.trace);
   $("generateHint").textContent = a.usage
-    ? `${a.usage.calls} model calls · ${a.usage.input_tokens.toLocaleString()} in / ${a.usage.output_tokens.toLocaleString()} out tokens`
+    ? `${a.usage.calls} pipeline stages${a.usage.output_tokens ? ` · ${a.usage.output_tokens.toLocaleString()} output tokens` : " · no model calls"}`
     : "";
 }
 
@@ -394,12 +395,11 @@ function renderTrace(container, trace) {
 $("generateBtn").onclick = async () => {
   if (!state.analysis) return;
   showOverlay("Generating tailored resume", [
-    "Writing the tailored document",
+    "Ranking and selecting your bullets against the JD",
+    "Reordering skills by requirement priority",
+    "Composing the summary from your parsed facts",
     "Running ATS format checks",
     "Running the truthfulness gate",
-    "Repairing any failures and re-validating",
-    "Surfacing supported keywords",
-    "Auditing every claim against your master resume",
     "Simulating the recruiter scan",
   ]);
   try {

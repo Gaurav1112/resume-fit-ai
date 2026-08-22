@@ -14,7 +14,7 @@
     <span class="logo">RF</span>
     <div>
       <h1>ResumeFit AI</h1>
-      <p>Turn every job description into a truthful, ATS-optimized resume.</p>
+      <p>Turn every job description into a truthful, ATS-optimized resume. No API key, no network, no model.</p>
     </div>
   </div>
   <div class="topbar-right">
@@ -43,11 +43,11 @@
         nothing outside it will ever appear in a generated document.</p>
       <div class="drop" id="resumeDrop" tabindex="0" role="button"
            aria-label="Upload master resume">
-        <input type="file" id="resumeFile" accept=".pdf,.docx,.txt,.md,.rtf" hidden />
+        <input type="file" id="resumeFile" accept=".pdf,.docx,.html,.htm,.txt,.md,.rtf" hidden />
         <div class="drop-inner">
           <div class="drop-icon">⬆</div>
           <strong>Drag &amp; drop your resume</strong>
-          <span>or click to browse — PDF, DOCX, TXT, Markdown</span>
+          <span>or click to browse — PDF, DOCX, HTML, TXT, Markdown</span>
         </div>
       </div>
       <div class="filechip hidden" id="resumeChip"></div>
@@ -64,7 +64,7 @@
       <textarea id="jdText" rows="14" placeholder="Paste the job description…"></textarea>
       <div class="or">or</div>
       <div class="drop compact" id="jdDrop" tabindex="0" role="button" aria-label="Upload JD">
-        <input type="file" id="jdFile" accept=".pdf,.docx,.txt,.md,.rtf" hidden />
+        <input type="file" id="jdFile" accept=".pdf,.docx,.html,.htm,.txt,.md,.rtf" hidden />
         <div class="drop-inner"><span>Upload a JD file</span></div>
       </div>
       <div class="filechip hidden" id="jdChip"></div>
@@ -174,10 +174,13 @@
         <div class="row gap">
           <button class="ghost small" id="copyBtn">Copy text</button>
           <button class="ghost small" id="dlTxt">TXT</button>
-          <button class="ghost small" id="dlDocx">DOCX</button>
-          <button class="primary small" id="dlPdf">PDF</button>
+          <button class="ghost small" id="dlPdf">PDF</button>
+          <button class="primary small" id="dlDocx" title="Safest default: legacy Taleo portals fail on a share of PDFs">DOCX ★</button>
         </div>
       </div>
+      <p class="hint" style="margin-top:8px">Download <b>DOCX</b> unless the posting asks
+        for PDF — modern parsers read both, but legacy Taleo portals still fail on a
+        share of PDFs. The preview below is the plain text an ATS extracts.</p>
       <pre class="resume-preview" id="resumePreview"></pre>
     </div>
 

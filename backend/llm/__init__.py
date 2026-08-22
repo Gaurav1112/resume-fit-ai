@@ -18,10 +18,18 @@ def get_provider(
     if key in _CACHE:
         return _CACHE[key]
 
-    if name == "anthropic":
+    if name == "local":
+        from .local_provider import LocalProvider
+
+        instance: Provider = LocalProvider(model_id, eff)
+    elif name == "ollama":
+        from .ollama_provider import OllamaProvider
+
+        instance = OllamaProvider(model_id, eff)
+    elif name == "anthropic":
         from .anthropic_provider import AnthropicProvider
 
-        instance: Provider = AnthropicProvider(model_id, eff, settings.anthropic_api_key)
+        instance = AnthropicProvider(model_id, eff, settings.anthropic_api_key)
     elif name == "openai":
         from .openai_provider import OpenAIProvider
 
@@ -36,7 +44,8 @@ def get_provider(
         instance = MockProvider(model_id or "mock-1", eff)
     else:
         raise LLMError(
-            f"Unknown LLM_PROVIDER '{name}'. Use one of: anthropic, openai, gemini, mock."
+            f"Unknown LLM_PROVIDER '{name}'. Use one of: "
+            "local, ollama, anthropic, openai, gemini, mock."
         )
 
     _CACHE[key] = instance

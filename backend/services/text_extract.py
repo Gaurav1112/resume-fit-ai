@@ -6,7 +6,7 @@ import io
 import re
 import unicodedata
 
-SUPPORTED = {".pdf", ".docx", ".txt", ".md", ".markdown", ".rtf"}
+SUPPORTED = {".pdf", ".docx", ".txt", ".md", ".markdown", ".rtf", ".html", ".htm"}
 
 
 class ExtractionError(ValueError):
@@ -77,6 +77,48 @@ def _from_docx(data: bytes) -> str:
     return "\n".join(parts)
 
 
+_BLOCK_TAGS = (
+    "p", "div", "li", "tr", "br", "h1", "h2", "h3", "h4", "h5", "h6",
+    "section", "article", "header", "footer", "ul", "ol", "table",
+)
+
+
+def _from_html(data: bytes) -> str:
+    """Extract text from an HTML resume.
+
+    Many people keep their master resume as an HTML file they render to PDF, so
+    this is a first-class input. Block-level tags become newlines and list items
+    become bullets, which is what the downstream section parser expects; script,
+    style and head content is dropped entirely.
+    """
+    html = data.decode("utf-8", errors="replace")
+
+    html = re.sub(r"(?is)<(script|style|head|noscript)\b.*?</\1\s*>", " ", html)
+    html = re.sub(r"(?s)<!--.*?-->", " ", html)
+
+    # List items become bullets before the generic tag strip, so the resume
+    # parser can still tell a bullet from a paragraph.
+    html = re.sub(r"(?i)<li\b[^>]*>", "\n- ", html)
+    for tag in _BLOCK_TAGS:
+        html = re.sub(rf"(?i)</?{tag}\b[^>]*>", "\n", html)
+    html = re.sub(r"(?i)<t[dh]\b[^>]*>", " | ", html)
+    html = re.sub(r"<[^>]+>", "", html)
+
+    import html as html_module
+
+    text = html_module.unescape(html)
+    # Collapse the runs of blank lines that tag stripping leaves behind, but keep
+    # single blank lines — the projects parser uses them as separators.
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    lines = [ln.strip() for ln in text.splitlines()]
+    out: list[str] = []
+    for line in lines:
+        if line or (out and out[-1]):
+            out.append(line)
+    return "\n".join(out)
+
+
 def _from_rtf(data: bytes) -> str:
     raw = data.decode("utf-8", errors="ignore")
     raw = re.sub(r"\\'([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), raw)
@@ -98,8 +140,12 @@ def extract(filename: str, data: bytes) -> str:
         return _clean(_from_pdf(data))
     if suffix == ".docx":
         return _clean(_from_docx(data))
+    if suffix in {".html", ".htm"}:
+        return _clean(_from_html(data))
     if suffix == ".rtf":
         return _clean(_from_rtf(data))
+    if data[:200].lstrip()[:9].lower().startswith((b"<!doctype", b"<html")):
+        return _clean(_from_html(data))
     if suffix in {".txt", ".md", ".markdown", ""}:
         return _clean(data.decode("utf-8", errors="replace"))
     if suffix == ".doc":

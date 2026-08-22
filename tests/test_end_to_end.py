@@ -125,7 +125,9 @@ def client(tmp_path_factory):
 def test_health_endpoint(client):
     body = client.get("/api/health").json()
     assert body["status"] == "ok"
-    assert body["provider"] == "mock"
+    # Whichever no-key provider is configured, the app must report itself ready.
+    assert body["provider"] in {"local", "mock", "ollama"}
+    assert body["configured"] is True
 
 
 def test_analyze_rejects_a_too_short_resume(client):

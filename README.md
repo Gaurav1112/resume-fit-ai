@@ -9,6 +9,31 @@ diff explaining every change.
 
 ---
 
+## No API key. No network. No model.
+
+The default engine is **pure rules**. It parses your resume, decomposes the JD,
+matches requirements against evidence, scores, validates and writes the tailored
+document entirely in Python. It runs in about a second and never makes a network
+call.
+
+That is not a downgrade — it makes the core guarantee *stronger*:
+
+> The writer never composes a factual sentence. It **selects, ranks, reorders and
+> reformats your own text.** There is no generative step that could invent a
+> metric, so fabrication is structurally impossible rather than merely prohibited.
+
+The summary is the single place prose is assembled, and it is a template whose
+every slot is filled from a parsed field — any slot that cannot be filled is
+dropped rather than guessed.
+
+| Engine (`LLM_PROVIDER`) | Key | Network | What it adds |
+|---|---|---|---|
+| **`local`** (default) | none | none | Everything below. Bullets kept verbatim. |
+| `ollama` | none | none | A local model rewords bullets; rejected if it adds a number |
+| `anthropic` / `openai` / `gemini` | yes | yes | Hosted model rewording |
+
+The hosted providers are optional and inert unless you switch to them.
+
 ## The one thing that makes this different
 
 Most resume tools are keyword stuffers with a language model attached. This one
@@ -40,13 +65,28 @@ $ pytest tests/test_validators.py -q
      honest rewording            → passes
 ```
 
-### On "100% ATS compatible"
+### On "100% ATS"
 
-No resume is universally 100% ATS-compatible — Workday, Greenhouse, Taleo and
-iCIMS parse differently, and anyone promising a guaranteed score is selling you
-something. What this measures is an **ATS Readiness Score /100** against the
-format rules that are safe across all of them, with every check named and every
-failure listing the exact offending text.
+The generator reaches **100/100 on format compliance by construction** — it
+controls every byte of output, so it emits standard headings, one date format,
+safe glyphs, no tables, no images, no text boxes, and contact details in the
+body. That number is real and reproducible.
+
+What nobody can promise is a *universal* 100%, and it is worth knowing why:
+independent testing found two-column layouts scrambled in 7 of 8 ATS products
+and tables dropping content in 5 of 8, while field-level parsing accuracy tops
+out near 87% even on clean documents. The same resume fed to Workday,
+Greenhouse, Lever, iCIMS and Taleo yields different numbers of extracted skills
+and jobs. So: 100% on the rules that are safe everywhere, and an honest account
+of the rest.
+
+(The widely repeated "75% of resumes are rejected by an ATS" figure has no study
+behind it — it traces to a 2012 vendor sales pitch. This project does not use it.)
+
+**Download DOCX unless the posting asks for PDF.** Modern cloud parsers handle
+both, but legacy on-premise Taleo configurations still fail on a share of PDFs
+due to an older text-extraction library. The UI marks DOCX as the default for
+that reason.
 
 | Score | Band |
 |---|---|
@@ -62,14 +102,13 @@ failure listing the exact offending text.
 
 ```bash
 git clone <this repo> && cd resume-fit-ai
-./run.sh                      # creates .env on first run
-# add ANTHROPIC_API_KEY to .env
-./run.sh                      # → http://127.0.0.1:8000
+./run.sh          # → http://127.0.0.1:8000
 ```
 
-**No API key?** Set `LLM_PROVIDER=mock` in `.env`. The whole pipeline runs offline
-with stub content — useful for exploring the UI and exercising the scoring and
-validation engines, but the generated prose is not real output.
+That is the whole setup. No key, no signup, no model download.
+
+Upload your master resume (PDF, DOCX, **HTML**, TXT or Markdown), paste the job
+description, click Analyze, then Generate.
 
 Manual setup:
 
@@ -78,12 +117,28 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # add your key
 uvicorn backend.main:app --reload
-pytest -q                     # 80 tests, no network required
+pytest -q                     # 113 tests, no network required
 ```
 
 ---
 
 ## Architecture
+
+### What the rules engine does
+
+| Stage | How |
+|---|---|
+| Parse resume | Section-synonym detection; roles anchored on **date ranges**, with the header read from before *or* after the date line (real resumes do both); wrapped bullets rejoined by indentation |
+| Total experience | Employment intervals **merged**, so concurrent roles aren't double-counted |
+| Analyse JD | Requirements split per skill; priority **P0–P3** from the posting's own section headings and hedging words ("required" vs "preferred" vs "nice to have") |
+| Match | Canonical ontology + weighted semantic edges (below) |
+| Position | Target title re-levelled *down* to what your titles evidence; never up |
+| Write | Bullets ranked by JD relevance, selected within a word budget, kept **verbatim**; skills regrouped by requirement priority; summary template-filled from parsed fields |
+| Validate | 18 deterministic ATS checks + the truthfulness gate |
+
+Presentation-only transforms are allowed because they cannot change a fact:
+stripping filler openers ("Responsible for…"), normalising dates to one format,
+splitting an over-long bullet at a clause boundary, removing decorative glyphs.
 
 ### A graph, not a chain
 
@@ -198,6 +253,8 @@ resume-fit-ai/
 │   │   ├── __init__.py         system prompts per stage
 │   │   └── schemas.py          JSON Schemas (Anthropic-constraint compliant)
 │   └── services/
+│       ├── local_engine.py     THE ENGINE — parse, analyse, position, write
+│       ├── dates.py            date parsing, normalisation, interval merging
 │       ├── ontology.py         canonical skills + weighted semantic edges
 │       ├── matching.py         evidence index + requirement matching
 │       ├── scoring.py          explainable weighted scoring
@@ -277,12 +334,15 @@ Set `LLM_PROVIDER` in `.env`.
 
 | Provider | Structured output | Notes |
 |---|---|---|
-| `anthropic` *(default)* | Native, server-enforced | `output_config.format` with a JSON Schema |
+| `local` *(default)* | n/a — no model | Pure rules; see above |
+| `ollama` | n/a | Local model rewords bullets only; a rewrite that adds a number or drops a technology is rejected and the original restored |
+| `anthropic` | Native, server-enforced | `output_config.format` with a JSON Schema |
 | `openai` | JSON mode + schema in prompt | `pip install openai` |
 | `gemini` | JSON MIME + schema in prompt | `pip install google-genai` |
 | `mock` | Deterministic stubs | No network, no key |
 
-The Anthropic path is written against the current API and matters if you extend it:
+The hosted paths are optional. The Anthropic one is written against the current
+API, and matters only if you switch to it:
 
 - **`temperature` / `top_p` / `top_k` are rejected with a 400** on Claude Opus 5,
   Fable 5, Opus 4.8 and 4.7. Never send them.
@@ -317,7 +377,7 @@ Your resume is sensitive, and this app treats it that way.
 ## Tests
 
 ```bash
-pytest -q                            # 80 tests, no network, no API key
+pytest -q                            # 113 tests, no network, no API key
 pytest tests/test_validators.py -q   # the adversarial truthfulness suite
 ```
 

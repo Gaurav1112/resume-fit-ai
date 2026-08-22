@@ -27,7 +27,7 @@ from ..models.schemas import (
     ValidationCheck,
     ValidationReport,
 )
-from . import ontology
+from . import dates, ontology
 from .render import all_bullet_texts, to_plain_text
 
 # Numbers that carry a factual claim. Deliberately excludes bare small integers
@@ -81,6 +81,14 @@ def validate(
 
     # ---- 1. Metrics ------------------------------------------------------
     master_numbers = _master_number_set(master_text)
+    # A total-years figure computed from employment dates that are on the resume
+    # is *derived* from the source, not invented — even when that exact integer
+    # never appears as a literal. Admit it, and only it.
+    if profile.total_years_experience:
+        years = profile.total_years_experience
+        master_numbers |= {
+            str(int(years)), str(round(years)), f"{years:g}", str(int(years) + 1)
+        }
     invented: list[str] = []
     for bullet in all_bullet_texts(resume):
         for token in _numbers_in(bullet):
@@ -164,12 +172,16 @@ def validate(
                 bad_titles.append(f"{role.title} @ {role.company}")
             source_role = by_company.get(company_norm)
             if source_role:
-                if role.start_date and role.start_date.strip() != source_role.start_date.strip():
+                # Compared semantically, not as strings: rendering "03/2021" as
+                # "Mar 2021" is a formatting change the ATS validator actively
+                # wants. Changing 2021 to 2019 is a fabrication. Only the second
+                # should fail here.
+                if role.start_date and not dates.same(role.start_date, source_role.start_date):
                     bad_dates.append(
                         f"{role.company} start: '{role.start_date}' vs source "
                         f"'{source_role.start_date}'"
                     )
-                if role.end_date and role.end_date.strip() != source_role.end_date.strip():
+                if role.end_date and not dates.same(role.end_date, source_role.end_date):
                     bad_dates.append(
                         f"{role.company} end: '{role.end_date}' vs source "
                         f"'{source_role.end_date}'"
@@ -277,10 +289,16 @@ def validate(
         "security clearance", "top secret", "ts/sci", "green card", "us citizen",
         "h1b", "h-1b", "work permit", "permanent resident", "ead",
     ]
+    # Word-boundary matched: a substring test fires "ead" inside "lead" and
+    # "h1b" inside a build id, which would fail an honest resume.
     gen_norm = ontology.normalise(generated)
+
+    def _mentions(haystack: str, term: str) -> bool:
+        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) is not None
+
     sensitive_added = [
         term for term in sensitive_terms
-        if term in gen_norm and term not in master_norm
+        if _mentions(gen_norm, term) and not _mentions(master_norm, term)
     ]
     checks.append(
         ValidationCheck(

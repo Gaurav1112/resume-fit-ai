@@ -22,7 +22,7 @@ from ..models.schemas import (
     ValidationReport,
 )
 from . import ontology
-from .render import all_bullet_texts, to_plain_text
+from .render import bullet_texts_only, to_plain_text
 
 STANDARD_HEADINGS = {
     "summary", "professional summary", "profile", "objective",
@@ -68,13 +68,22 @@ def _date_ok(value: str) -> bool:
     return any(p.match(v) for p in DATE_PATTERNS)
 
 
+def _density(text: str) -> tuple[Counter, int]:
+    tokens = [
+        t for t in re.findall(r"[a-z][a-z0-9+#.\-]{2,}", text.lower())
+        if t not in STOPWORDS
+    ]
+    return Counter(tokens), max(1, len(tokens))
+
+
 def validate(
     resume: TailoredResume,
     jd: JDAnalysis | None = None,
     matrix: list[MatchRow] | None = None,
+    master_text: str = "",
 ) -> ValidationReport:
     text = to_plain_text(resume)
-    bullets = all_bullet_texts(resume)
+    bullets = bullet_texts_only(resume)
     checks: list[ValidationCheck] = []
 
     # -- Contact ------------------------------------------------------------
@@ -244,6 +253,22 @@ def validate(
         )
     )
 
+    summary_text = " ".join(
+        p for s_ in resume.sections if s_.kind == "summary" for p in s_.paragraphs
+    )
+    if summary_text:
+        words = len(summary_text.split())
+        checks.append(
+            _check(
+                "summary_length",
+                "Professional summary is a readable length",
+                25 <= words <= 90,
+                "warning",
+                f"{words} words. Under ~25 says nothing; over ~90 stops being a summary "
+                "and will not be read.",
+            )
+        )
+
     # -- Length -------------------------------------------------------------
     words = len(text.split())
     checks.append(
@@ -258,30 +283,60 @@ def validate(
     )
 
     # -- Keyword stuffing ---------------------------------------------------
-    tokens = [
-        t for t in re.findall(r"[a-z][a-z0-9+#.\-]{2,}", text.lower())
-        if t not in STOPWORDS
-    ]
-    counts = Counter(tokens)
-    total = max(1, len(tokens))
-    stuffed = [
-        f"'{term}' ×{n} ({100 * n / total:.1f}% of text)"
-        for term, n in counts.most_common(25)
-        if n >= 7 and (n / total) > 0.015
-    ]
+    counts, total = _density(text)
+    master_counts, master_total = _density(master_text) if master_text else (Counter(), 1)
+
+    introduced: list[str] = []
+    inherited: list[str] = []
+    for term, n in counts.most_common(25):
+        ratio = n / total
+        if n < 7 or ratio <= 0.015:
+            continue
+        label = f"'{term}' ×{n} ({100 * ratio:.1f}% of the document)"
+        master_n = master_counts.get(term, 0)
+        # Compare *counts*, not densities. If tailoring added no new occurrences,
+        # it cannot have stuffed the term — the density rose only because less
+        # relevant text was removed around it. That is selection working, and
+        # failing the document for it would punish the tool for doing its job.
+        # The repetition is still worth surfacing, as a warning against the
+        # master resume.
+        if master_text and n <= master_n:
+            inherited.append(
+                f"{label} — appears {master_n}× in your master resume; tailoring "
+                "added none"
+            )
+        else:
+            introduced.append(
+                f"{label} — up from {master_n}× in your master resume"
+                if master_text else label
+            )
+
     checks.append(
         _check(
             "keyword_stuffing",
-            "No keyword stuffing detected",
-            not stuffed,
+            "Tailoring introduced no keyword stuffing",
+            not introduced,
             "critical",
-            "A term repeated well beyond natural density reads as gaming the filter "
-            "to both an ATS and a human."
-            if stuffed
-            else "Keyword density is within a natural range.",
-            stuffed,
+            "A term repeated well beyond its density in your own resume reads as "
+            "gaming the filter, to an ATS and a human alike."
+            if introduced
+            else "Tailoring did not inflate any term's density.",
+            introduced,
         )
     )
+    if inherited:
+        checks.append(
+            _check(
+                "source_repetition",
+                "Repetition carried over from your master resume",
+                False,
+                "warning",
+                "These terms are heavily repeated in your own writing. No ATS will "
+                "penalise it, but a human reader notices the loop. Vary the wording "
+                "in your master resume and re-run.",
+                inherited,
+            )
+        )
 
     # -- Duplicate lines ----------------------------------------------------
     seen = Counter(b.strip().lower() for b in bullets)
@@ -321,12 +376,24 @@ def validate(
 
         # Supported-but-absent: the recoverable miss the lift loop targets.
         doc_terms = ontology.extract_known_terms(text)
-        missing = [
-            r.requirement
-            for r in matrix
-            if r.score >= 0.6 and r.canonical not in doc_terms
-            and ontology.normalise(r.requirement) not in ontology.normalise(text)
-        ]
+        doc_norm = ontology.normalise(text)
+
+        def _surfaced(row: MatchRow) -> bool:
+            if row.canonical in doc_terms:
+                return True
+            if ontology.normalise(row.requirement) in doc_norm:
+                return True
+            # "Container orchestration" is surfaced by the word "Kubernetes".
+            # The row already records which skill satisfied it, so ask about that
+            # rather than hunting for the abstract phrase itself.
+            if row.matched_via and ontology.canonicalise(row.matched_via) in doc_terms:
+                return True
+            return any(
+                ontology.canonicalise(t) in doc_terms
+                for t in ontology.expand_concept(row.canonical)
+            )
+
+        missing = [r.requirement for r in matrix if r.score >= 0.6 and not _surfaced(r)]
         checks.append(
             _check(
                 "supported_keywords_surfaced",

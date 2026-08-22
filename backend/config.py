@@ -33,6 +33,8 @@ _load_dotenv(ROOT / ".env")
 # Default model per provider. These are the current flagship ids as of the
 # claude-api reference bundled with this project; override with LLM_MODEL.
 DEFAULT_MODELS = {
+    "local": "local-rules",
+    "ollama": "qwen2.5:7b",
     "anthropic": "claude-opus-5",
     "openai": "gpt-4.1",
     "gemini": "gemini-2.5-pro",
@@ -42,7 +44,7 @@ DEFAULT_MODELS = {
 
 @dataclass(frozen=True)
 class Settings:
-    provider: str = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()
+    provider: str = os.getenv("LLM_PROVIDER", "local").strip().lower()
     model: str = ""
     effort: str = os.getenv("LLM_EFFORT", "high").strip().lower()
 
@@ -78,8 +80,8 @@ class Settings:
     @property
     def configured(self) -> bool:
         """True when the selected provider can actually be called."""
-        if self.provider == "mock":
-            return True
+        if self.provider in ("local", "mock", "ollama"):
+            return True    # no credential required
         if self.provider == "anthropic":
             # The Anthropic SDK also resolves credentials from `ant auth login`
             # profiles, so an unset key does not necessarily mean unconfigured.
