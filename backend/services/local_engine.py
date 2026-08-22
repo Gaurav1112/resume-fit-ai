@@ -758,7 +758,19 @@ def parse_resume(text: str) -> dict[str, Any]:
                 break
 
     all_terms = ontology.extract_known_terms(text)
-    domains = sorted(t for t in all_terms if ontology.category_of(t) == "Domain")
+    lowered = text.lower()
+    # Weight by evidence, not alphabet: a domain named once in a short early role
+    # should not lead the summary ahead of one named throughout the resume.
+    domains = sorted(
+        (t for t in all_terms if ontology.category_of(t) == "Domain"),
+        key=lambda t: (
+            -max(
+                lowered.count(alias)
+                for alias in [t, *ontology.ALIAS_GROUPS.get(t, [])] if alias
+            ),
+            t,
+        ),
+    )
     leadership = [b for r in roles for b in r["leadership"]]
 
     return {
