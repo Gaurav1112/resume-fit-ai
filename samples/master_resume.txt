@@ -1,0 +1,85 @@
+ARJUN MEHTA
+Senior Backend Engineer
+arjun.mehta@example.com | +91 98200 11223 | Bengaluru, India
+linkedin.com/in/arjunmehta-example | github.com/arjunmehta-example
+
+PROFESSIONAL SUMMARY
+Backend engineer with 8 years building distributed services for finance and
+commerce platforms. Comfortable owning a system end to end, from schema design
+through on-call.
+
+TECHNICAL SKILLS
+Languages: Java, Kotlin, Go, SQL, Bash
+Frameworks: Spring Boot, Spring Cloud, Hibernate, Gin
+Data: PostgreSQL, MySQL, Redis, Elasticsearch, MongoDB
+Messaging: Apache Kafka, RabbitMQ, Amazon SQS
+Cloud & Platform: AWS (EC2, S3, Lambda, SQS, RDS), Kubernetes, OpenShift, Docker, Helm, Terraform
+CI/CD: Jenkins, GitHub Actions, ArgoCD
+Observability: Prometheus, Grafana, Datadog, OpenTelemetry
+Testing: JUnit, TestNG, Pact, k6
+Practices: Microservices, Event-driven architecture, Domain-driven design, TDD, Code review
+
+PROFESSIONAL EXPERIENCE
+
+Senior Backend Engineer, Northwind Payments
+Bengaluru, India | Mar 2021 - Present
+- Designed and shipped a Kafka-based event processing pipeline that decoupled
+  settlement from order capture, cutting end-to-end settlement latency from
+  90 seconds to 12 seconds.
+- Led the migration of a monolithic payments service into 7 Spring Boot
+  microservices deployed on OpenShift, completed with zero customer-facing downtime.
+- Built an idempotent retry and reconciliation layer over Amazon SQS that
+  eliminated duplicate settlements, which had previously affected roughly 1200
+  transactions per month.
+- Introduced contract testing with Pact across 7 services, reducing integration
+  defects found in staging by 60%.
+- Owned the PostgreSQL schema and query performance for the ledger service,
+  handling 4500 transactions per second at peak.
+- Mentored 4 engineers through onboarding and promotion, and ran the team's
+  weekly design review.
+- Set up Prometheus and Grafana dashboards plus Datadog alerting; reduced mean
+  time to detection for settlement incidents from 25 minutes to 4 minutes.
+
+Backend Engineer, Kestrel Commerce
+Pune, India | Jul 2018 - Feb 2021
+- Built REST and gRPC services in Java and Go for the catalogue and pricing
+  domains, serving 8 million requests per day.
+- Implemented Redis-backed caching for the pricing API, cutting p99 latency from
+  340ms to 45ms.
+- Migrated CI from Jenkins to GitHub Actions across 22 repositories, taking the
+  median build from 14 minutes to 5 minutes.
+- Added OpenTelemetry distributed tracing across the checkout path, which
+  surfaced a connection-pool bottleneck that had caused three prior outages.
+- Wrote the Terraform modules for the team's AWS networking and RDS footprint.
+
+Software Engineer, Vertex Systems
+Pune, India | Jun 2016 - Jun 2018
+- Developed internal reporting tools in Java and Spring, backed by MySQL.
+- Automated a manual month-end reconciliation process, saving roughly 20 hours
+  of analyst time per month.
+- Wrote JUnit test suites for the billing module, raising coverage from 34% to 81%.
+
+PROJECTS
+
+Ledger Replay Tool (internal, Northwind Payments)
+A Go CLI that replays Kafka settlement events against a shadow PostgreSQL ledger
+to verify correctness before a release. Used as a release gate by 3 teams.
+Technologies: Go, Kafka, PostgreSQL, Docker
+
+Open-source: spring-idempotency-starter
+A small Spring Boot starter that adds idempotency-key handling to REST
+controllers. 340 GitHub stars.
+Technologies: Java, Spring Boot, Redis
+
+EDUCATION
+B.E., Computer Science — University of Pune
+Pune, India | Aug 2012 - May 2016
+- First class with distinction
+
+CERTIFICATIONS
+AWS Certified Solutions Architect – Associate, Amazon Web Services, 2022
+Certified Kubernetes Application Developer (CKAD), CNCF, 2023
+
+ACHIEVEMENTS
+- Speaker, Bangalore JUG 2023: "Idempotency patterns for payment systems"
+- Internal engineering excellence award, Northwind Payments, 2022

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ResumeFit AI — JD-to-Resume Optimization Engine</title>
+<link rel="stylesheet" href="/styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">RF</span>
+    <div>
+      <h1>ResumeFit AI</h1>
+      <p>Turn every job description into a truthful, ATS-optimized resume.</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span class="pill" id="providerPill" title="Configured in .env — keys never reach the browser">…</span>
+    <button class="ghost" id="themeToggle" title="Toggle theme">◐</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-tab="input" role="tab">1 · Input</button>
+  <button class="tab" data-tab="analysis" role="tab" disabled>2 · Analysis</button>
+  <button class="tab" data-tab="resume" role="tab" disabled>3 · Resume</button>
+  <button class="tab" data-tab="changes" role="tab" disabled>4 · Changes</button>
+  <button class="tab" data-tab="tracker" role="tab">Tracker</button>
+</nav>
+
+<main>
+
+<!-- ==================== 1 · INPUT ==================== -->
+<section class="panel active" id="tab-input">
+  <div class="grid-2">
+
+    <div class="card">
+      <h2>Master resume</h2>
+      <p class="hint">Your full, un-tailored resume. This is the only source of truth —
+        nothing outside it will ever appear in a generated document.</p>
+      <div class="drop" id="resumeDrop" tabindex="0" role="button"
+           aria-label="Upload master resume">
+        <input type="file" id="resumeFile" accept=".pdf,.docx,.txt,.md,.rtf" hidden />
+        <div class="drop-inner">
+          <div class="drop-icon">⬆</div>
+          <strong>Drag &amp; drop your resume</strong>
+          <span>or click to browse — PDF, DOCX, TXT, Markdown</span>
+        </div>
+      </div>
+      <div class="filechip hidden" id="resumeChip"></div>
+      <details class="paste">
+        <summary>…or paste the text instead</summary>
+        <textarea id="resumeText" rows="10" placeholder="Paste your full resume text…"></textarea>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Target job description</h2>
+      <p class="hint">Paste the full posting, including the requirements and
+        qualifications sections — that's what the priority classifier reads.</p>
+      <textarea id="jdText" rows="14" placeholder="Paste the job description…"></textarea>
+      <div class="or">or</div>
+      <div class="drop compact" id="jdDrop" tabindex="0" role="button" aria-label="Upload JD">
+        <input type="file" id="jdFile" accept=".pdf,.docx,.txt,.md,.rtf" hidden />
+        <div class="drop-inner"><span>Upload a JD file</span></div>
+      </div>
+      <div class="filechip hidden" id="jdChip"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row wrap gap">
+      <label class="field">
+        <span>Target market</span>
+        <select id="market">
+          <option>Global Remote</option><option>India</option><option>USA</option>
+          <option>Canada</option><option>UK</option><option>Europe</option>
+          <option>Middle East</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Repair-loop iterations</span>
+        <select id="repairIters">
+          <option value="1">1 — fastest</option>
+          <option value="3" selected>3 — recommended</option>
+          <option value="5">5 — most thorough</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Keyword-lift rounds</span>
+        <select id="liftRounds">
+          <option value="0">0 — off</option>
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+        </select>
+      </label>
+      <details class="weights">
+        <summary>Scoring weights</summary>
+        <div id="weightGrid" class="weight-grid"></div>
+        <button class="ghost small" id="resetWeights">Reset to defaults</button>
+      </details>
+    </div>
+    <div class="actions">
+      <button class="primary big" id="analyzeBtn">Analyze JD</button>
+      <span class="hint" id="inputHint"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 2 · ANALYSIS ==================== -->
+<section class="panel" id="tab-analysis">
+  <div class="scorestrip" id="analysisScores"></div>
+
+  <div class="card">
+    <div class="row between center">
+      <h2>Target positioning</h2>
+      <span class="badge" id="positioningBadge"></span>
+    </div>
+    <div id="positioningBox"></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Requirement ↔ evidence matrix</h2>
+      <p class="hint">Every JD requirement, scored against what your resume can actually
+        demonstrate. This is the core of the analysis.</p>
+      <div class="filterbar">
+        <input type="search" id="matrixFilter" placeholder="Filter requirements…" />
+        <label class="check"><input type="checkbox" id="onlyGaps" /> Only unmet</label>
+      </div>
+      <div class="tablewrap"><table class="matrix" id="matrixTable"></table></div>
+    </div>
+
+    <div class="card">
+      <h2>JD gaps</h2>
+      <p class="hint">Requirements with no supporting evidence. The system will not
+        invent these — it reports them so you can decide.</p>
+      <div id="gapsList"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row between center">
+      <h2>Score breakdown</h2>
+      <span class="hint">Every component is computed in code and explains itself.</span>
+    </div>
+    <div id="baselineBreakdown"></div>
+  </div>
+
+  <div class="card">
+    <h2>Pipeline</h2>
+    <div class="trace" id="analysisTrace"></div>
+  </div>
+
+  <div class="actions sticky">
+    <button class="primary big" id="generateBtn">Generate tailored resume</button>
+    <span class="hint" id="generateHint"></span>
+  </div>
+</section>
+
+<!-- ==================== 3 · RESUME ==================== -->
+<section class="panel" id="tab-resume">
+  <div class="scorestrip" id="finalScores"></div>
+
+  <div id="statusBanner"></div>
+
+  <div class="grid-2-wide">
+    <div class="card">
+      <div class="row between center">
+        <h2>Preview</h2>
+        <div class="row gap">
+          <button class="ghost small" id="copyBtn">Copy text</button>
+          <button class="ghost small" id="dlTxt">TXT</button>
+          <button class="ghost small" id="dlDocx">DOCX</button>
+          <button class="primary small" id="dlPdf">PDF</button>
+        </div>
+      </div>
+      <pre class="resume-preview" id="resumePreview"></pre>
+    </div>
+
+    <div class="stack">
+      <div class="card">
+        <h2>Recruiter's 10-second scan</h2>
+        <div id="recruiterBox"></div>
+      </div>
+      <div class="card">
+        <h2>Validation</h2>
+        <div class="segmented" id="validationTabs">
+          <button class="seg active" data-v="ats">ATS format</button>
+          <button class="seg" data-v="truth">Truthfulness</button>
+        </div>
+        <div id="validationList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Convergence loop</h2>
+    <p class="hint">Generate → validate → repair. The loop stops when every critical
+      check passes, when the score plateaus, or at the iteration cap.</p>
+    <div id="loopBox"></div>
+  </div>
+</section>
+
+<!-- ==================== 4 · CHANGES ==================== -->
+<section class="panel" id="tab-changes">
+  <div class="card">
+    <h2>What changed, and why</h2>
+    <p class="hint">Every material edit, with the reason and the place in your master
+      resume it came from.</p>
+    <div id="changesList"></div>
+  </div>
+
+  <div class="card">
+    <div class="row between center">
+      <h2>Before / after</h2>
+      <div class="legend">
+        <span class="chip kept">kept</span>
+        <span class="chip rewritten">rewritten</span>
+        <span class="chip added">added</span>
+        <span class="chip removed">removed</span>
+      </div>
+    </div>
+    <div id="diffStats" class="statrow"></div>
+    <div id="diffList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Save to tracker</h2>
+    <div class="row wrap gap">
+      <label class="field grow"><span>Company</span><input id="appCompany" /></label>
+      <label class="field grow"><span>Job title</span><input id="appTitle" /></label>
+      <label class="field grow"><span>Application URL</span><input id="appUrl" placeholder="https://…" /></label>
+      <label class="field"><span>Applied on</span><input id="appDate" type="date" /></label>
+      <label class="field"><span>Status</span>
+        <select id="appStatus">
+          <option>saved</option><option>applied</option><option>screen</option>
+          <option>interview</option><option>onsite</option><option>offer</option>
+          <option>rejected</option>
+        </select>
+      </label>
+    </div>
+    <label class="field"><span>Notes</span><textarea id="appNotes" rows="2"></textarea></label>
+    <div class="actions"><button class="primary" id="saveAppBtn">Save application</button></div>
+  </div>
+</section>
+
+<!-- ==================== TRACKER ==================== -->
+<section class="panel" id="tab-tracker">
+  <div class="card">
+    <div class="row between center">
+      <h2>Which positioning is performing best?</h2>
+      <button class="ghost small" id="refreshTracker">Refresh</button>
+    </div>
+    <p class="hint" id="trackerNote"></p>
+    <div id="positioningTable"></div>
+  </div>
+
+  <div class="card">
+    <h2>Resume versions</h2>
+    <div class="tablewrap"><table class="matrix" id="versionsTable"></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Applications</h2>
+    <div class="tablewrap"><table class="matrix" id="appsTable"></table></div>
+  </div>
+
+  <div class="card danger-zone">
+    <div class="row between center">
+      <div>
+        <h2>Your data</h2>
+        <p class="hint">Everything is stored locally in <code>data/resumefit.db</code>.
+          Nothing is sent anywhere except your configured LLM provider.</p>
+      </div>
+      <button class="danger" id="purgeBtn">Delete all stored data</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="overlay hidden" id="overlay">
+  <div class="loader">
+    <div class="spinner"></div>
+    <h3 id="loaderTitle">Working…</h3>
+    <p id="loaderText"></p>
+    <ul class="steps" id="loaderSteps"></ul>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

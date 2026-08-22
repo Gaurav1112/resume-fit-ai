@@ -1,0 +1,47 @@
+Staff Backend Engineer — Platform
+Helios Financial Technologies | Remote (US timezones) | Full-time
+
+About the role
+Helios builds real-time treasury infrastructure for mid-market banks. You will
+join the Platform team, which owns the event backbone, the service mesh, and the
+deployment tooling that every product team depends on. This is a hands-on staff
+role: you will design systems, write code, and set technical direction across
+teams.
+
+What you'll do
+- Design and operate event-driven systems handling millions of financial
+  transactions per day
+- Lead the decomposition of remaining monolithic services into well-bounded
+  microservices
+- Own the reliability of the platform, including on-call, SLOs, and incident
+  review
+- Set standards for API design, testing, and observability across the engineering org
+- Mentor senior engineers and act as a technical reviewer for major designs
+
+Requirements
+- 8+ years of professional backend software engineering experience
+- Expert-level Java, including Spring Boot
+- Deep experience with Apache Kafka and event-driven architecture
+- Strong background in distributed systems and microservices at scale
+- Production experience with Kubernetes and container orchestration
+- Hands-on with AWS
+- Strong SQL and relational data modeling (PostgreSQL preferred)
+- Experience with infrastructure as code (Terraform)
+- Demonstrated technical leadership: mentoring, design review, cross-team influence
+- Excellent written communication
+
+Preferred
+- Experience in fintech, payments, or banking
+- Python for tooling and automation
+- Familiarity with service mesh technologies (Istio or Linkerd)
+- Experience with GraphQL
+- Prior experience running a platform or infrastructure team
+
+Nice to have
+- Open-source contributions
+- Public speaking or technical writing
+- Experience with Rust
+
+What we offer
+Competitive compensation, equity, and a fully remote team across US timezones.
+Applicants must be authorized to work in the United States.

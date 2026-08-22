@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Contains API keys — never commit.
+.env
+
+# Contains your resume text and every analysis you've run — local only.
+data/
+*.db
+llm_trace.jsonl
+
+.DS_Store
+.idea/
+.vscode/
