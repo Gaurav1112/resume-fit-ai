@@ -396,3 +396,38 @@ def test_cover_letter_renders_to_text(letter_fixture):
     text = local_engine.cover_letter_to_text(letter)
     assert "Dear" in text and "Kind regards," in text
     assert text.endswith("\n")
+
+
+def test_pdf_layout_puts_the_employer_on_the_date_line():
+    """PDF extraction collapses the employer onto the dates and drops indentation.
+
+    The line before a role header is then often the tail of the *previous* role's
+    last bullet — which is how "Performer 2023" (from "...recognised as Star
+    Performer 2023") became an employer. The residue of the date line is
+    structurally bound to this role, so it must outrank the preceding line.
+    """
+    roles = local_engine._parse_experience(
+        [
+            "- Mentored 5 junior engineers through code review - recognised as Star",
+            "Performer 2023",
+            "Oracle February 2022 - September 2022",
+            "Software Development Engineer L3 - Bengaluru, India",
+            "- Architected backend APIs reducing query response time by 50%.",
+        ]
+    )
+    assert roles[-1]["company"] == "Oracle"
+    assert roles[-1]["title"] == "Software Development Engineer L3"
+
+
+def test_a_sub_team_in_the_title_does_not_become_the_employer():
+    """"Senior Engineer, India GCC" names a sub-team, not the company."""
+    roles = local_engine._parse_experience(
+        [
+            "Talendy Holdings - India Global Capability Center",
+            "December 2025 - Present",
+            "Senior Engineer, India GCC - Bengaluru, India",
+            "- Founding engineer for the India GCC.",
+        ]
+    )
+    assert roles[0]["company"] == "Talendy Holdings"
+    assert roles[0]["title"] == "Senior Engineer"

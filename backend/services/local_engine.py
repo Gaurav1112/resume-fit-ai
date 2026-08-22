@@ -333,15 +333,21 @@ def _looks_like_location(text: str) -> bool:
     return bool(COUNTRY_HINT.search(parts[1]))
 
 
-def _classify_header_parts(candidate: str) -> tuple[str, str, str]:
-    """Pull (title, company, location) out of one role-header candidate line."""
-    title = company = location = ""
+def _classify_header_parts(candidate: str) -> tuple[str, str, str, str]:
+    """Pull (title, company, location, weak_company) out of one header candidate.
+
+    `weak_company` is a company inferred from the tail of a title segment —
+    "Senior Engineer, India GCC" yields the sub-team, not the employer. It is
+    returned separately so a real employer found on any other candidate line
+    always wins over it.
+    """
+    title = company = location = weak_company = ""
     value = sanitise(candidate).strip(" ,|")
     if not value:
-        return "", "", ""
+        return "", "", "", ""
 
     if _looks_like_location(value):
-        return "", "", value
+        return "", "", value, ""
 
     segments = [s.strip(" ,") for s in re.split(r"\s*\|\s*|\s+[-–—]\s+", value) if s.strip(" ,")]
     for segment in segments:
@@ -349,14 +355,14 @@ def _classify_header_parts(candidate: str) -> tuple[str, str, str]:
             # The segment may itself be "Title, Company".
             head, _, tail = segment.partition(",")
             if tail and not _looks_like_title(tail) and not _looks_like_location(tail.strip()):
-                title, company = head.strip(), company or tail.strip()
+                title, weak_company = head.strip(), weak_company or tail.strip()
             else:
                 title = segment
         elif not location and _looks_like_location(segment):
             location = segment
         elif not company:
             company = segment
-    return title, company, location
+    return title, company, location, weak_company
 
 
 def _split_role_header(line: str) -> tuple[str, str]:
@@ -397,6 +403,12 @@ def _parse_experience(lines: list[str]) -> list[dict[str, Any]]:
     current: dict[str, Any] | None = None
     pending: list[str] = []
     last_was_bullet = False
+    # Whether the previous bullet's RAW line ended a sentence. PDF extraction
+    # discards indentation and can break mid-word, so "does the previous line
+    # look finished?" is a far more reliable continuation signal than "is this
+    # line indented or lowercase" — which mis-read "Performer 2023" (the tail of
+    # "...recognised as Star Performer 2023") as the next employer's name.
+    last_line_finished = True
 
     entries = [(i, ln) for i, ln in enumerate(lines)]
 
@@ -420,21 +432,23 @@ def _parse_experience(lines: list[str]) -> list[dict[str, Any]]:
         match = dates.RANGE.search(stripped)
         if match and not is_bullet(stripped):
             residue = dates.RANGE.sub("", stripped).strip(" |,-\u2013\u2014\u00b7")
-            candidates = [c for c in (pending[-1] if pending else "",
-                                      residue,
-                                      lookahead(index)) if c]
+            candidates = [c for c in (residue,
+                                      lookahead(index),
+                                      pending[-1] if pending else "") if c]
 
-            title = company = location = ""
+            title = company = location = weak_company = ""
             for candidate in candidates:
-                c_title, c_company, c_location = _classify_header_parts(candidate)
+                c_title, c_company, c_location, c_weak = _classify_header_parts(candidate)
                 title = title or c_title
                 company = company or c_company
                 location = location or c_location
+                weak_company = weak_company or c_weak
+            company = company or weak_company
 
             # A company found on the same fragment as the title should not also be
             # claimed from an earlier line; prefer the earliest non-title fragment.
             if not company and len(pending) >= 2:
-                _t, alt_company, _l = _classify_header_parts(pending[-2])
+                _t, alt_company, _l, _w = _classify_header_parts(pending[-2])
                 company = alt_company
 
             current = {
@@ -454,16 +468,19 @@ def _parse_experience(lines: list[str]) -> list[dict[str, Any]]:
             roles.append(current)
             pending = []
             last_was_bullet = False
+            last_line_finished = True
             continue
 
         if is_bullet(stripped) and current is not None:
             current["bullets"].append(clean_bullet(stripped))
             last_was_bullet = True
+            last_line_finished = stripped.rstrip()[-1:] in ".!?"
         elif (
             current is not None
             and current["bullets"]
             and last_was_bullet
             and (stripped[0].islower() or raw_indented)
+            and not _heading_kind(line)
         ):
             # A wrapped continuation of the previous bullet. Detected by
             # indentation or a lowercase opening — not by keyword absence, which
@@ -472,10 +489,12 @@ def _parse_experience(lines: list[str]) -> list[dict[str, Any]]:
             current["bullets"][-1] = clean_bullet(
                 current["bullets"][-1].rstrip(".") + " " + stripped
             )
+            last_line_finished = stripped.rstrip()[-1:] in ".!?"
         else:
             pending.append(stripped)
             pending = pending[-3:]
             last_was_bullet = False
+            last_line_finished = True
 
     for role in roles:
         text = " ".join(role["bullets"])
