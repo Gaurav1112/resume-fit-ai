@@ -16,12 +16,7 @@ fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo
-  echo "  Created .env from .env.example."
-  echo "  Add your ANTHROPIC_API_KEY to .env, then run this script again."
-  echo "  (Or set LLM_PROVIDER=mock in .env to explore the UI with no API key.)"
-  echo
-  exit 1
+  echo "→ Created .env (defaults to the local rules engine — no API key needed)"
 fi
 
 PORT=$(grep -E '^PORT=' .env | cut -d= -f2 | tr -d '[:space:]' || true)
