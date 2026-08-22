@@ -131,7 +131,54 @@ def test_unsupported_technology_is_caught(profile):
     report = truth_validator.validate(resume, profile, MASTER)
     failure = check(report, "no_invented_technologies")
     assert not failure.passed
-    assert "rust" in [o.lower() for o in failure.offenders]
+    assert any("rust" in o.lower() for o in failure.offenders)
+
+
+def test_an_alias_substituted_for_the_candidates_own_tool_is_caught():
+    """The regression that shipped: rendering a canonical alias in place of the
+    candidate's own wording.
+
+    The master says Playwright and LBAC; the document said Cypress and ABAC.
+    Because the old check canonicalised *both* sides before comparing, the two
+    were the same token and the substitution was invisible — the gate reported
+    green on a resume claiming products the candidate had never used.
+    """
+    master = (
+        "Wrote the end-to-end suite in Playwright. "
+        "Designed label-based access control (LBAC) for a multi-tenant product."
+    )
+    profile = CandidateProfile(contact=Contact(name="A", email="a@b.co"))
+
+    substituted = TailoredResume(
+        contact=Contact(name="A", email="a@b.co"),
+        sections=[
+            ResumeSection(
+                heading="Core Skills", kind="skills",
+                skill_groups={"Testing": ["Cypress"], "Security": ["ABAC"]},
+            )
+        ],
+    )
+    failure = check(
+        truth_validator.validate(substituted, profile, master), "no_invented_technologies"
+    )
+    assert not failure.passed
+    joined = " ".join(failure.offenders).lower()
+    assert "cypress" in joined and "playwright" in joined, (
+        "the failure must name both the wrong term and the candidate's own word"
+    )
+
+    faithful = TailoredResume(
+        contact=Contact(name="A", email="a@b.co"),
+        sections=[
+            ResumeSection(
+                heading="Core Skills", kind="skills",
+                skill_groups={"Testing": ["Playwright"], "Security": ["LBAC"]},
+            )
+        ],
+    )
+    assert check(
+        truth_validator.validate(faithful, profile, master), "no_invented_technologies"
+    ).passed
 
 
 def test_altered_company_name_is_caught(profile):

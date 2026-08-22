@@ -1155,6 +1155,22 @@ def _numbers_in_source(text: str) -> set[str]:
     return {re.sub(r"[^\d.]", "", d).rstrip(".") for d in re.findall(r"\d[\d,.]*", text)}
 
 
+def _as_written(master_text: str, form: str) -> str:
+    """The master's own spelling of `form`, preferring a capitalised occurrence.
+
+    Changing case is presentation; changing the word is not. So we keep the
+    candidate's term and only tidy how it is capitalised for a skills grid.
+    """
+    pattern = rf"(?<![A-Za-z0-9]){re.escape(form)}(?![A-Za-z0-9])"
+    occurrences = re.findall(pattern, master_text, re.I)
+    if not occurrences:
+        return form.title()
+    for occurrence in occurrences:
+        if occurrence[:1].isupper():
+            return occurrence
+    return occurrences[0].title()
+
+
 def write_resume(
     profile: dict[str, Any],
     jd: dict[str, Any],
@@ -1163,6 +1179,16 @@ def write_resume(
     master_text: str,
 ) -> dict[str, Any]:
     """Select, rank and reformat the candidate's own content for this JD."""
+    # The candidate's own spelling for every skill the ontology recognises.
+    # Rendering must go through this: printing the canonical display name turns
+    # "Playwright" into "Cypress" and "LBAC" into "ABAC".
+    surface = ontology.extract_surface_forms(master_text)
+
+    def render_skill(canon: str) -> str | None:
+        written = surface.get(canon)
+        if written is None:
+            return None          # not in the master in any spelling — never print it
+        return _as_written(master_text, written)
     wanted: dict[str, float] = {}
     for row in matrix:
         if row["score"] >= 0.35:
@@ -1263,8 +1289,8 @@ def write_resume(
             continue
         if not wanted.get(canon) and len(grouped.get(category, [])) >= 6:
             continue        # keep unrelated groups short rather than exhaustive
-        name = ontology.display(canon)
-        if name not in grouped.setdefault(category, []):
+        name = render_skill(canon)
+        if name and name not in grouped.setdefault(category, []):
             grouped[category].append(name)
 
     skill_groups = [
@@ -1272,7 +1298,7 @@ def write_resume(
         for category in ontology.CATEGORY_ORDER
         if (skills := grouped.get(category))
     ]
-    surfaced = [ontology.display(c) for c in ranked[:8] if wanted.get(c)]
+    surfaced = [n for c in ranked[:8] if wanted.get(c) and (n := render_skill(c))]
     if surfaced:
         changes.append({
             "change": "Reordered Core Skills so this JD's priorities lead: "
@@ -1371,8 +1397,14 @@ def _compose_summary(
     if domain:
         lead += f" in {domain}"
 
-    top = [ontology.display(c) for c, _w in
-           sorted(wanted.items(), key=lambda kv: -kv[1])[:5]]
+    written = ontology.extract_surface_forms(master_text)
+
+    def as_written(canon: str) -> str | None:
+        form = written.get(canon)
+        return _as_written(master_text, form) if form else None
+
+    top = [n for c, _w in sorted(wanted.items(), key=lambda kv: -kv[1])[:8]
+           if (n := as_written(c))][:5]
     if top:
         lead += f", working across {', '.join(top[:-1])} and {top[-1]}" if len(top) > 1 \
             else f", working with {top[0]}"
@@ -1532,7 +1564,20 @@ def write_cover_letter(
         if r.get("score", 0) >= 0.85 and r.get("priority") in ("P0", "P1")
     ]
     proven.sort(key=lambda r: (r["priority"], -r["score"]))
-    headline_skills = [ontology.display(r["canonical"]) for r in proven[:4]]
+    written = ontology.extract_surface_forms(master_text)
+
+    def as_written(canon: str, fallback: str) -> str:
+        form = written.get(canon)
+        return _as_written(master_text, form) if form else fallback
+
+    # Only claim what the resume literally says. A JD asking for Istio, answered
+    # by a candidate who runs Linkerd, must not produce "I have spent years in
+    # Istio" followed by evidence naming Linkerd.
+    headline_skills = [
+        as_written(r["canonical"], "")
+        for r in proven[:6]
+    ]
+    headline_skills = [h for h in headline_skills if h][:4]
 
     opening = (
         f"I'm applying for the {job_title} role"
@@ -1572,8 +1617,16 @@ def write_cover_letter(
             continue
         best = max(candidates, key=lambda b: _bullet_relevance(b, wanted))
         consumed.add(best)
-        label = ontology.display(canon)
-        body.append(f"On {label}: {best.rstrip('.')}.")
+        # Label with the term the evidence actually uses. Labelling with the JD's
+        # word produces "On Istio: Ran the Linkerd service mesh" — a claim the
+        # very next clause contradicts.
+        label = as_written(canon, "")
+        if not label or not re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(label)}(?![A-Za-z0-9])", best, re.I
+        ):
+            body.append(best.rstrip(".") + ".")
+        else:
+            body.append(f"On {label}: {best.rstrip('.')}.")
         evidence_used.append(f"{row['requirement']} → {best[:70]}…")
 
     # Fall back to the strongest quantified achievements if the matrix produced

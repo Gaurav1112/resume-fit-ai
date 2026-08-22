@@ -28,7 +28,7 @@ from ..models.schemas import (
     ValidationReport,
 )
 from . import dates, ontology
-from .render import all_bullet_texts, to_plain_text
+from .render import all_bullet_texts, claim_texts, to_plain_text
 
 # Numbers that carry a factual claim. Deliberately excludes bare small integers
 # ("3 services") which are usually structural, and version-like tokens.
@@ -61,6 +61,13 @@ def _numbers_in(text: str) -> list[str]:
 def _digits(token: str) -> str:
     """Reduce a metric to comparable digits: '1,200' and '1200' both -> '1200'."""
     return re.sub(r"[^\d.]", "", token).rstrip(".")
+
+
+def _mentions_word(haystack: str, term: str) -> bool:
+    """Word-boundary containment on normalised text."""
+    return re.search(
+        rf"(?<![a-z0-9]){re.escape(ontology.normalise(term))}(?![a-z0-9])", haystack
+    ) is not None
 
 
 def _master_number_set(master_text: str) -> set[str]:
@@ -132,12 +139,26 @@ def validate(
     )
 
     # ---- 3. Technologies -------------------------------------------------
-    master_terms = ontology.extract_known_terms(master_text)
-    generated_terms = ontology.extract_known_terms(generated)
-    unsupported_tech = sorted(
-        t for t in (generated_terms - master_terms)
-        if ontology.normalise(t) not in master_norm
-    )
+    # Compared as SURFACE STRINGS, not canonical ids.
+    #
+    # The previous version canonicalised both sides before comparing, which made
+    # the check tautological for the exact error it exists to catch: the master
+    # says "Playwright", the document says "Cypress", both canonicalise to
+    # `cypress`, and the substitution was invisible. That shipped a resume
+    # claiming three products the candidate had never used, with the gate green.
+    generated_forms = ontology.extract_surface_forms(" \n".join(claim_texts(resume)))
+    master_forms = ontology.extract_surface_forms(master_text)
+    unsupported_tech: list[str] = []
+    for canon, written in sorted(generated_forms.items()):
+        if _mentions_word(master_norm, written):
+            continue
+        in_master = master_forms.get(canon)
+        if in_master:
+            unsupported_tech.append(
+                f"'{written}' — your resume says '{in_master}', not this"
+            )
+        else:
+            unsupported_tech.append(f"'{written}' (absent from your resume)")
     checks.append(
         ValidationCheck(
             id="no_invented_technologies",
@@ -145,10 +166,11 @@ def validate(
             passed=not unsupported_tech,
             severity="critical",
             detail=(
-                "These technologies are not in the source. If the candidate does know "
-                "them, add them to the master resume first — do not introduce them here."
+                "These product names do not appear in your resume. Where a different "
+                "spelling is shown, an alias was rendered in place of your own wording "
+                "— claiming a product you have not used is worse than a missed keyword."
                 if unsupported_tech
-                else "All technologies named are present in the source."
+                else "Every technology named appears in your resume, in your wording."
             ),
             offenders=unsupported_tech[:12],
         )
@@ -292,13 +314,9 @@ def validate(
     # Word-boundary matched: a substring test fires "ead" inside "lead" and
     # "h1b" inside a build id, which would fail an honest resume.
     gen_norm = ontology.normalise(generated)
-
-    def _mentions(haystack: str, term: str) -> bool:
-        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) is not None
-
     sensitive_added = [
         term for term in sensitive_terms
-        if _mentions(gen_norm, term) and not _mentions(master_norm, term)
+        if _mentions_word(gen_norm, term) and not _mentions_word(master_norm, term)
     ]
     checks.append(
         ValidationCheck(

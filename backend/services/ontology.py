@@ -543,6 +543,38 @@ def display(canonical: str) -> str:
     return " ".join(w.upper() if w in _ACRONYMS else w.capitalize() for w in words)
 
 
+def extract_surface_forms(text: str) -> dict[str, str]:
+    """canonical -> the literal string as it appears in `text`.
+
+    Aliasing is what lets a JD asking for "container orchestration" match a resume
+    saying "OpenShift". But an alias must never reach the rendered document: the
+    candidate wrote "Playwright", and printing "Cypress" because both canonicalise
+    to `cypress` is a false claim about a product they have never used. Callers
+    that render must use this, not display().
+    """
+    n = " " + normalise(text) + " "
+    found: dict[str, str] = {}
+    for surface, canon in _SURFACE_TO_CANONICAL.items():
+        pattern = rf"(?<![a-z0-9]){re.escape(surface)}(?![a-z0-9+#])"
+        if re.search(pattern, n):
+            # Prefer the longest surface form actually present — "spring boot"
+            # over "spring" — and prefer the canonical's own spelling when it is
+            # the one written.
+            current = found.get(canon)
+            if current is None:
+                found[canon] = surface
+            elif current == canon:
+                continue          # the canonical spelling is present; keep it
+            elif surface == canon or len(surface) > len(current):
+                found[canon] = surface
+    return found
+
+
+def surface_in(text: str, canonical: str) -> str | None:
+    """The literal spelling of `canonical` in `text`, or None if truly absent."""
+    return extract_surface_forms(text).get(canonical)
+
+
 def extract_known_terms(text: str) -> set[str]:
     """Find every canonical skill mentioned anywhere in a blob of text.
 

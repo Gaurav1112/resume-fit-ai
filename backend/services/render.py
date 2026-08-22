@@ -116,6 +116,29 @@ def all_bullet_texts(resume: TailoredResume) -> list[str]:
     return [t for t in out if t and t.strip()]
 
 
+def claim_texts(resume: TailoredResume) -> list[str]:
+    """Only the text that asserts something about the candidate.
+
+    Excludes section headings and skill-category labels. Those are structural
+    furniture chosen by the generator, not claims — reading them as claims
+    flagged the "Observability" category heading as an invented technology.
+    """
+    out: list[str] = []
+    for section in resume.sections:
+        out.extend(section.paragraphs)
+        out.extend(b.text for b in section.bullets)
+        for skills in section.skill_groups.values():
+            out.extend(skills)                      # values, never the group name
+        for role in section.roles:
+            out.extend([role.title, role.company, role.location])
+            out.extend(b.text for b in role.bullets)
+        for edu in section.education:
+            out.extend([edu.degree, edu.field_of_study, edu.institution, *edu.details])
+        for cert in section.certifications:
+            out.extend([cert.name, cert.issuer])
+    return [t for t in out if t and t.strip()]
+
+
 def bullet_texts_only(resume: TailoredResume) -> list[str]:
     """Only true bullets — no summary paragraphs.
 
