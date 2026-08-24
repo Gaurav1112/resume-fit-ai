@@ -307,6 +307,39 @@ def _looks_like_title(text: str) -> bool:
     return any(h in low for h in TITLE_HINTS)
 
 
+SENTENCE_WORD = re.compile(
+    r"^(is|are|am|was|were|be|been|will|would|can|could|should|do|does|did|"
+    r"you|we|us|our|your|their|they|it|this|that|there|here|who|where|what|"
+    r"a|an|the|to|of|in|on|at|by|for|from|with|and|or|but|as|about|"
+    r"join|joining|looking|seeking|hiring|want|wanted|place|people|team's)$",
+    re.I,
+)
+
+
+def _is_plausible_job_title(text: str) -> bool:
+    """A job title is a short noun phrase, not a sentence.
+
+    `_looks_like_title` only asks whether a title word appears *anywhere*, which
+    is true of plenty of prose ("we are looking for a senior engineer to join
+    us"). A job description's first line is very often employer marketing —
+    Apple's opens "Apple is a place where extraordinary people gather to do
+    their best work" — and accepting that as the title puts the employer's copy
+    at the head of the candidate's own summary, asserting something they never
+    wrote about themselves.
+    """
+    value = (text or "").strip().strip(".,:;")
+    if not value or len(value) > 70:
+        return False
+    words = value.split()
+    if not 1 <= len(words) <= 8:
+        return False
+    if not _looks_like_title(value):
+        return False
+    # "Head of Engineering" and "Engineer, Payments" carry at most one connective;
+    # a sentence carries several.
+    return sum(1 for w in words if SENTENCE_WORD.match(w.strip(",.;:"))) <= 1
+
+
 COUNTRY_HINT = re.compile(
     r"\b(india|usa|u\.s\.a|united states|uk|united kingdom|canada|germany|france|"
     r"japan|singapore|australia|ireland|netherlands|spain|poland|remote|onsite|"
@@ -866,6 +899,17 @@ JD_BOILERPLATE = re.compile(
 )
 
 
+BULLET_LEAD = re.compile(r"^\s*[-•*·▪◦–—]\s+")
+# Requirement bullets read like titles once the leading dash is stripped
+# ("Experience leading engineering teams"), so they are excluded by shape.
+REQUIREMENT_LEAD = re.compile(
+    r"^\s*(experience|strong|proven|solid|demonstrated|excellent|deep|hands[- ]on|"
+    r"proficiency|proficient|familiarity|familiar|knowledge|understanding|ability|"
+    r"bachelor|master|degree|\d+\+?\s*years?)\b",
+    re.I,
+)
+
+
 def analyse_jd(text: str, market: str = "global") -> dict[str, Any]:
     lines = [l for l in text.splitlines()]
     # Job boards prepend boilerplate headings; treating one as the title or the
@@ -875,21 +919,40 @@ def analyse_jd(text: str, market: str = "global") -> dict[str, Any]:
         if l.strip() and not JD_BOILERPLATE.match(l.strip().rstrip(":"))
     ]
 
+    # Identity (title, employer) lives in the header block — everything before
+    # the first recognised section heading. Searching past it harvests
+    # requirement bullets as titles ("- Experience leading engineering teams")
+    # and section headings as employers ("Minimum Qualifications").
+    header: list[str] = []
+    for line in non_empty:
+        if _jd_section_of(line):
+            break
+        header.append(line)
+    header = header[:12]
+
     job_title = ""
-    for line in non_empty[:4]:
+    for line in header:
+        if BULLET_LEAD.match(line) or REQUIREMENT_LEAD.match(line):
+            continue
         candidate = re.split(r"[|—–]", line)[0].strip()
-        if _looks_like_title(candidate) and len(candidate) < 70:
+        if _is_plausible_job_title(candidate):
             job_title = sanitise(candidate)
             break
-    if not job_title and non_empty:
-        job_title = sanitise(non_empty[0])[:70]
+    # No fallback to the first line. Truncating arbitrary prose to 70 characters
+    # produced titles like "Apple is a place where extraordinary people gather to
+    # do their best wo", which then led the candidate's professional summary.
+    # An unknown title must stay unknown; downstream falls back to the
+    # candidate's own current title, which is the only truthful default.
 
     company = ""
-    for line in non_empty[:5]:
+    for line in header[:5]:
+        if BULLET_LEAD.match(line) or REQUIREMENT_LEAD.match(line):
+            continue
         for part in re.split(r"[|]", line):
             part = part.strip()
             if part and part != job_title and 2 <= len(part.split()) <= 5 \
                     and not _looks_like_title(part) \
+                    and not _jd_section_of(part) \
                     and not re.search(r"remote|hybrid|onsite|full-?time|part-?time", part, re.I):
                 company = sanitise(part)
                 break
@@ -1055,7 +1118,11 @@ def decide_positioning(
 ) -> dict[str, Any]:
     candidate_titles = [t for t in [profile.get("current_title", "")]
                         + list(profile.get("previous_titles") or []) if t]
+    # Defence in depth: the JD may have been parsed by a provider other than
+    # `analyse_jd`. A title that is not a title must never reach the headline.
     jd_title = jd.get("job_title", "")
+    if jd_title and not _is_plausible_job_title(jd_title):
+        jd_title = ""
     jd_level = _level_of(jd_title)
     own_level = max((_level_of(t) for t in candidate_titles), default=3)
 

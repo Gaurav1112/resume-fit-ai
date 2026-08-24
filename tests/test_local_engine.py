@@ -209,6 +209,72 @@ def test_jd_extracts_title_years_and_mode():
     assert jd["work_mode"] == "remote"
 
 
+EMPLOYER_MARKETING_JD = """Apple is a place where extraordinary people gather to do their best work. \
+Together we create products and experiences people once couldn't have imagined.
+
+Do you love working on challenges that no one has solved yet? As a member of our \
+Software Engineering group, you'll build the next generation of services.
+
+Minimum Qualifications
+- 10+ years of experience in SaaS
+- Strong Java and distributed systems background
+- Experience with REST APIs and data modelling
+
+Preferred Qualifications
+- Apache Kafka, Kubernetes
+- Experience leading engineering teams
+"""
+
+
+def test_employer_marketing_never_becomes_the_job_title():
+    """The regression that shipped into a real application.
+
+    When no line looked like a title, the parser fell back to the JD's first
+    line truncated to 70 characters. Apple's posting opens with marketing copy,
+    so the candidate's professional summary began "Apple is a place where
+    extraordinary people gather to do their best wo with 10+ years of
+    experience" — the employer's words asserted as the candidate's own.
+    """
+    jd = local_engine.analyse_jd(EMPLOYER_MARKETING_JD)
+    assert jd["job_title"] == "", f"invented a title: {jd['job_title']!r}"
+    assert "Apple" not in jd["job_title"]
+    assert "Apple" not in (jd.get("company") or "")
+
+
+def test_requirement_bullets_are_not_mistaken_for_the_title():
+    """"Experience leading engineering teams" is a requirement, not a title.
+
+    It survives the noun-phrase test, so identity is read only from the header
+    block above the first section heading.
+    """
+    jd = local_engine.analyse_jd(EMPLOYER_MARKETING_JD)
+    assert "Experience leading" not in jd["job_title"]
+    assert (jd.get("company") or "") != "Minimum Qualifications"
+
+
+@pytest.mark.parametrize(
+    "text, plausible",
+    [
+        ("Staff Backend Engineer", True),
+        ("Senior Software Engineer, Payments", True),
+        ("Head of Engineering", True),
+        ("Apple is a place where extraordinary people gather to do their best wo", False),
+        ("We are looking for a senior engineer to join our team", False),
+        ("Do you love working on challenges that no one has solved yet?", False),
+        ("Experience with REST APIs and data modelling", False),  # two connectives: prose
+        ("", False),
+    ],
+)
+def test_plausible_job_title_rejects_sentences(text, plausible):
+    assert local_engine._is_plausible_job_title(text) is plausible
+
+
+def test_a_real_title_is_still_parsed():
+    """The fix must not make the parser blind to ordinary postings."""
+    jd = local_engine.analyse_jd(JD)
+    assert "Staff Backend Engineer" in jd["job_title"]
+
+
 def test_compound_requirement_is_split_into_separate_rows():
     jd = local_engine.analyse_jd("Requirements\n- Java, Spring Boot and Kafka required")
     canonicals = {r["canonical"] for r in jd["requirements"]}
