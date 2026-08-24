@@ -20,6 +20,7 @@ Four public entry points, matching the four LLM stages they replace:
 
 from __future__ import annotations
 
+import functools
 import re
 from collections import Counter
 from typing import Any, Iterable
@@ -899,6 +900,26 @@ JD_BOILERPLATE = re.compile(
 )
 
 
+# Pasting a posting from a job board drags the page's buttons in with it, and
+# they sit on the same line as the title: "Senior AI Platform Engineer View Jobs".
+JOB_BOARD_CHROME = re.compile(
+    r"\s*[-–—|·•]?\s*(view all jobs?|view jobs?|see all jobs?|apply now|easy apply|"
+    r"quick apply|save this job|save job|save|share|back to (?:jobs|search|results)|"
+    r"new!?|featured|promoted|actively hiring|posted\b.*|job id\b.*|"
+    r"req(?:uisition)?\s*#?\s*\d+.*)\s*$",
+    re.I,
+)
+
+
+def _strip_job_board_chrome(text: str) -> str:
+    previous = None
+    value = text.strip()
+    while value != previous:            # buttons often arrive in pairs
+        previous = value
+        value = JOB_BOARD_CHROME.sub("", value).strip()
+    return value
+
+
 BULLET_LEAD = re.compile(r"^\s*[-•*·▪◦–—]\s+")
 # Requirement bullets read like titles once the leading dash is stripped
 # ("Experience leading engineering teams"), so they are excluded by shape.
@@ -934,7 +955,7 @@ def analyse_jd(text: str, market: str = "global") -> dict[str, Any]:
     for line in header:
         if BULLET_LEAD.match(line) or REQUIREMENT_LEAD.match(line):
             continue
-        candidate = re.split(r"[|—–]", line)[0].strip()
+        candidate = _strip_job_board_chrome(re.split(r"[|]", line)[0].strip())
         if _is_plausible_job_title(candidate):
             job_title = sanitise(candidate)
             break
@@ -1217,6 +1238,44 @@ DISTINCTIVE_RE = re.compile(
 )
 
 
+@functools.lru_cache(maxsize=1)
+def _incoming_edges() -> dict[str, list[tuple[str, float]]]:
+    """`ontology.EDGES` inverted.
+
+    Edges are stored one-way, from the general term to the specific one
+    (`llm` -> `anthropic api`, `observability` -> `datadog`). Ranking a resume
+    bullet asks the opposite question — "how much does this job description want
+    *this* term?" — so it needs the incoming direction too.
+    """
+    incoming: dict[str, list[tuple[str, float]]] = {}
+    for source, targets in ontology.EDGES.items():
+        for target, weight in targets:
+            incoming.setdefault(target, []).append((source, weight))
+    return incoming
+
+
+def _term_weight(term: str, wanted: dict[str, float]) -> float:
+    """The JD's interest in `term`, following ontology edges in both directions.
+
+    An exact dictionary lookup made the candidate's strongest evidence invisible
+    to the job description that most wanted it: the resume says "Claude API"
+    (canonical `anthropic api`), an AI platform posting says "LLM integration",
+    and the two are joined by an edge weighted 0.85. Matching, scoring and gap
+    analysis all traverse those edges — bullet ranking was the one place still
+    doing string equality, so an AI role surfaced a deployment-tooling bullet as
+    the candidate's best AI evidence, and "DataDog" scored zero against a JD
+    asking for observability.
+    """
+    best = wanted.get(term, 0.0)
+    for neighbour, weight in ontology.related(term):
+        if neighbour in wanted:
+            best = max(best, wanted[neighbour] * weight)
+    for source, weight in _incoming_edges().get(term, []):
+        if source in wanted:
+            best = max(best, wanted[source] * weight)
+    return best
+
+
 def _bullet_relevance(bullet: str, wanted: dict[str, float]) -> float:
     terms = ontology.extract_known_terms(bullet)
 
@@ -1224,7 +1283,7 @@ def _bullet_relevance(bullet: str, wanted: dict[str, float]) -> float:
     # out a quantified achievement simply by naming more things. Before this cap,
     # "Shipped 26 merged pull requests in five weeks - the highest contribution of
     # any engineer in the GCC" lost its place to keyword-dense filler.
-    keyword_score = min(sum(wanted.get(t, 0.0) for t in terms), 14.0)
+    keyword_score = min(sum(_term_weight(t, wanted) for t in terms), 14.0)
 
     score = keyword_score
     if QUANT_RE.search(bullet):

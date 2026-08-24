@@ -275,6 +275,50 @@ def test_a_real_title_is_still_parsed():
     assert "Staff Backend Engineer" in jd["job_title"]
 
 
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("Senior AI Platform Engineer View Jobs", "Senior AI Platform Engineer"),
+        ("Staff Backend Engineer  Apply Now", "Staff Backend Engineer"),
+        ("Software Engineer - Save Job", "Software Engineer"),
+        ("Principal Engineer | Easy Apply", "Principal Engineer"),
+        ("Backend Engineer View Jobs Apply Now", "Backend Engineer"),
+        ("Senior Engineer", "Senior Engineer"),
+    ],
+)
+def test_job_board_buttons_are_stripped_from_the_title(line, expected):
+    """Pasting from a job board drags the page's buttons onto the title line.
+
+    "Senior AI Platform Engineer View Jobs" became the candidate's headline and
+    the first words of their professional summary.
+    """
+    jd = local_engine.analyse_jd(f"{line}\nBengaluru, India\n\nRequirements\n- Java")
+    assert jd["job_title"] == expected
+
+
+def test_bullet_ranking_follows_ontology_edges_in_both_directions():
+    """The resume says "Claude API"; the JD says "LLM integration".
+
+    `ontology.EDGES` runs one way (llm -> anthropic api), so scoring a bullet by
+    exact lookup gave the candidate's flagship AI work a weight of zero against
+    the one job description that most wanted it.
+    """
+    wanted = {"llm": 4.0, "observability": 4.0}
+    assert local_engine._term_weight("anthropic api", wanted) == pytest.approx(3.4)
+    assert local_engine._term_weight("datadog", wanted) == pytest.approx(3.6)
+    # An unrelated term stays at zero — expansion must not become a free pass.
+    assert local_engine._term_weight("kotlin", wanted) == 0.0
+
+
+def test_ai_evidence_outranks_unrelated_evidence_for_an_ai_role():
+    ai_wanted = {"llm": 4.0, "rag": 4.0, "prompt engineering": 4.0}
+    claude = ("Architected and solo-developed a 34,000-line production TypeScript "
+              "platform on the Claude API")
+    warehouse = "Developed warehouse management modules in Java serving 200+ clients"
+    assert (local_engine._bullet_relevance(claude, ai_wanted)
+            > local_engine._bullet_relevance(warehouse, ai_wanted))
+
+
 def test_compound_requirement_is_split_into_separate_rows():
     jd = local_engine.analyse_jd("Requirements\n- Java, Spring Boot and Kafka required")
     canonicals = {r["canonical"] for r in jd["requirements"]}
