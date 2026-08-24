@@ -214,6 +214,32 @@ def test_config_imports_on_a_read_only_filesystem(monkeypatch):
     assert config.settings.db_path.name == "x.db"
 
 
+def test_config_survives_blank_environment_variables(monkeypatch):
+    """A variable set to "" is *present*, so `os.getenv(name, default)` returns
+    "" rather than the default.
+
+    Vercel supplies an empty PORT, which made `int(os.getenv("PORT", "8000"))`
+    raise at import time — the whole app 500'd on every route before handling a
+    single request. A blank value must read as absent.
+    """
+    import importlib
+
+    for name in ("PORT", "MAX_UPLOAD_BYTES", "LLM_PROVIDER", "HOST", "DB_PATH"):
+        monkeypatch.setenv(name, "")
+
+    import backend.config as config
+
+    importlib.reload(config)              # must not raise
+    assert config.settings.port == 8000
+    assert config.settings.provider == "local"
+    assert config.settings.host == "127.0.0.1"
+    assert config.settings.max_upload_bytes == 10 * 1024 * 1024
+
+    monkeypatch.setenv("PORT", "not-a-number")
+    importlib.reload(config)              # a junk value must not kill the process
+    assert config.settings.port == 8000
+
+
 def test_full_flow_survives_a_cold_instance(client, texts):
     """On serverless the second request has neither the first request's memory
     nor a writable disk. The analysis is posted back instead."""

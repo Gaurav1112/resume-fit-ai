@@ -33,8 +33,12 @@ sys.path.insert(0, str(ROOT))
 
 # /tmp is the only writable path on Vercel. It is per-instance and ephemeral,
 # which is fine: nothing correctness-critical is stored there.
-os.environ.setdefault("DB_PATH", "/tmp/resumefit.db")
-os.environ.setdefault("LLM_PROVIDER", "local")
+#
+# Not `setdefault`: a variable defined as empty in the project's environment is
+# already "set", so setdefault would leave the blank value in place.
+for _key, _value in (("DB_PATH", "/tmp/resumefit.db"), ("LLM_PROVIDER", "local")):
+    if not os.environ.get(_key, "").strip():
+        os.environ[_key] = _value
 
 _IMPORT_ERROR: dict | None = None
 _application = None
