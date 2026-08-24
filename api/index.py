@@ -10,10 +10,16 @@ application tracker return empty. The frontend posts the analysis back to
 `/api/generate` and the document back to `/api/render/...`, so no request depends
 on state left behind by a previous one.
 
-If the import below fails, the platform returns a bare
-FUNCTION_INVOCATION_FAILED with the traceback only in the dashboard's runtime
-logs. A serverless entry point that cannot say why it died costs a deploy cycle
-per guess, so the failure is caught and served as JSON instead.
+Two constraints shape the structure below, both learned the hard way:
+
+1. The builder locates the entrypoint by parsing this file's AST, not by
+   importing it. It needs a *top-level* binding called `app` — a definition
+   nested inside `try:` is invisible to a static scan and fails the build with
+   "Could not find a top-level app". Hence the plain assignment at the end.
+2. A failed import otherwise surfaces as a bare FUNCTION_INVOCATION_FAILED with
+   the traceback only in the dashboard, costing a deploy cycle per guess. So the
+   import is caught and served as JSON by a framework-free ASGI app — the
+   framework being one of the candidates for what broke.
 """
 
 import json
@@ -31,9 +37,10 @@ os.environ.setdefault("DB_PATH", "/tmp/resumefit.db")
 os.environ.setdefault("LLM_PROVIDER", "local")
 
 _IMPORT_ERROR: dict | None = None
+_application = None
 
 try:
-    from backend.main import app
+    from backend.main import app as _application
 except BaseException:  # noqa: BLE001 - anything at all must be reportable
     _IMPORT_ERROR = {
         "error": "the application failed to import",
@@ -48,17 +55,21 @@ except BaseException:  # noqa: BLE001 - anything at all must be reportable
         "traceback": traceback.format_exc().splitlines(),
     }
 
-    async def app(scope, receive, send):  # type: ignore[misc]
-        """Minimal ASGI app — no framework, since the framework may be what broke."""
-        if scope["type"] != "http":
-            return
-        body = json.dumps(_IMPORT_ERROR, indent=2).encode()
-        await send({
-            "type": "http.response.start",
-            "status": 500,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": body})
 
+async def _report_import_error(scope, receive, send):
+    """Minimal ASGI app — no framework, since the framework may be what broke."""
+    if scope["type"] != "http":
+        return
+    body = json.dumps(_IMPORT_ERROR, indent=2).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 500,
+        "headers": [(b"content-type", b"application/json")],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
+# Top-level and unconditional: this is the name the builder scans for.
+app = _application if _application is not None else _report_import_error
 
 __all__ = ["app"]
