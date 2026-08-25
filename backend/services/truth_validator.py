@@ -183,7 +183,18 @@ def validate(
     bad_titles: list[str] = []
     bad_dates: list[str] = []
 
-    by_company = {ontology.normalise(r.company): r for r in profile.roles}
+    # Keyed by (company, title), not company alone. A promotion produces two
+    # roles at one employer, and a company-only dict keeps whichever came last —
+    # so the generated "Technical Analyst, Jan 2019 - Aug 2019" was measured
+    # against its own predecessor's dates and reported as a fabrication. Titles
+    # differ across a promotion, so this lookup stays exact rather than lenient.
+    by_company_title = {
+        (ontology.normalise(r.company), ontology.normalise(r.title)): r
+        for r in profile.roles
+    }
+    roles_at: dict[str, list] = {}
+    for r in profile.roles:
+        roles_at.setdefault(ontology.normalise(r.company), []).append(r)
     for section in resume.sections:
         for role in section.roles:
             company_norm = ontology.normalise(role.company)
@@ -192,7 +203,15 @@ def validate(
             title_norm = ontology.normalise(role.title)
             if title_norm and title_norm not in master_titles:
                 bad_titles.append(f"{role.title} @ {role.company}")
-            source_role = by_company.get(company_norm)
+            source_role = by_company_title.get((company_norm, title_norm))
+            if source_role is None:
+                siblings = roles_at.get(company_norm, [])
+                # One role at this employer: the title was reworded, which
+                # `titles_match` reports on its own, but the dates are still
+                # comparable. Several roles: the title identifies which, and an
+                # unmatched title is already a critical failure — guessing a
+                # counterpart here would only invent a second, misleading one.
+                source_role = siblings[0] if len(siblings) == 1 else None
             if source_role:
                 # Compared semantically, not as strings: rendering "03/2021" as
                 # "Mar 2021" is a formatting change the ATS validator actively

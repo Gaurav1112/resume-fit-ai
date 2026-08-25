@@ -181,6 +181,76 @@ def test_an_alias_substituted_for_the_candidates_own_tool_is_caught():
     ).passed
 
 
+PROMOTION_MASTER = """
+ARJUN MEHTA
+
+Technical Analyst, Kestrel Logistics
+Jan 2019 - Aug 2021
+- Led a team of 10 engineers.
+
+Associate Technical Analyst, Kestrel Logistics
+Jul 2016 - Dec 2018
+- Built warehouse modules in Java.
+"""
+
+
+def promotion_profile() -> CandidateProfile:
+    return CandidateProfile(
+        contact=Contact(name="Arjun Mehta", email="arjun@example.com"),
+        roles=[
+            Role(company="Kestrel Logistics", title="Technical Analyst",
+                 start_date="Jan 2019", end_date="Aug 2021", bullets=["Led a team of 10."]),
+            Role(company="Kestrel Logistics", title="Associate Technical Analyst",
+                 start_date="Jul 2016", end_date="Dec 2018", bullets=["Built warehouse modules."]),
+        ],
+    )
+
+
+def promotion_resume(**overrides) -> TailoredResume:
+    senior = ResumeRole(
+        company="Kestrel Logistics", title="Technical Analyst",
+        start_date=overrides.get("senior_start", "Jan 2019"),
+        end_date=overrides.get("senior_end", "Aug 2021"),
+        bullets=[ResumeBullet(text="Led a team of 10.")],
+    )
+    junior = ResumeRole(
+        company="Kestrel Logistics", title="Associate Technical Analyst",
+        start_date="Jul 2016", end_date="Dec 2018",
+        bullets=[ResumeBullet(text="Built warehouse modules.")],
+    )
+    return TailoredResume(
+        contact=Contact(name="Arjun Mehta", email="arjun@example.com"),
+        sections=[ResumeSection(heading="Professional Experience", kind="experience",
+                                roles=[senior, junior])],
+    )
+
+
+def test_a_promotion_at_one_employer_is_not_a_date_fabrication():
+    """Two roles at one employer must be matched by title, not by company.
+
+    A company-keyed lookup kept whichever role came last, so the senior role's
+    dates were compared against its own predecessor's and the gate reported a
+    critical fabrication on a resume that was entirely accurate. Every candidate
+    ever promoted internally would have hit this.
+    """
+    report = truth_validator.validate(
+        promotion_resume(), promotion_profile(), PROMOTION_MASTER
+    )
+    assert check(report, "dates_match").passed, check(report, "dates_match").offenders
+    assert check(report, "titles_match").passed
+
+
+def test_a_shifted_date_on_a_promoted_role_is_still_caught():
+    """The fix must not buy the promotion case at the cost of the gate."""
+    report = truth_validator.validate(
+        promotion_resume(senior_start="Jan 2017"), promotion_profile(), PROMOTION_MASTER
+    )
+    failure = check(report, "dates_match")
+    assert not failure.passed
+    assert failure.severity == "critical"
+    assert any("Jan 2017" in o for o in failure.offenders)
+
+
 def test_altered_company_name_is_caught(profile):
     resume = resume_with(["Designed pipelines."], company="Northwind Global Payments Inc")
     report = truth_validator.validate(resume, profile, MASTER)
